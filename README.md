@@ -17,7 +17,6 @@
 ## Сборка ISO
 
 ```bash
-cd /home/kavo/MyOs
 make
 ```
 
@@ -26,14 +25,12 @@ make
 ## Запуск в QEMU
 
 ```bash
-cd /home/kavo/MyOs
 make run
 ```
 
 ## Очистка
 
 ```bash
-cd /home/kavo/MyOs
 make clean
 ```
 
