@@ -28,6 +28,7 @@ void terminal_set_color(enum terminal_color fg, enum terminal_color bg);
 void terminal_write(const char *data);
 void terminal_write_line(const char *data);
 void terminal_putc(char c);
+void terminal_clear(void);
 
 #endif /* _MYOS_TERMINAL_H */
 

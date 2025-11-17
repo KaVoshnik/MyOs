@@ -9,6 +9,25 @@ size_t strlen(const char *str) {
     return len;
 }
 
+int strcmp(const char *a, const char *b) {
+    while (*a && (*a == *b)) {
+        ++a;
+        ++b;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+int strncmp(const char *a, const char *b, size_t n) {
+    while (n-- > 0) {
+        if (*a != *b || *a == '\0' || *b == '\0') {
+            return (unsigned char)*a - (unsigned char)*b;
+        }
+        ++a;
+        ++b;
+    }
+    return 0;
+}
+
 void *memset(void *dest, int value, size_t count) {
     unsigned char *ptr = (unsigned char *)dest;
     while (count--) {

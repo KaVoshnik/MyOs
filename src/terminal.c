@@ -48,6 +48,16 @@ void terminal_set_color(enum terminal_color fg, enum terminal_color bg) {
     terminal_color = make_color(fg, bg);
 }
 
+void terminal_clear(void) {
+    for (size_t row = 0; row < VGA_HEIGHT; ++row) {
+        for (size_t col = 0; col < VGA_WIDTH; ++col) {
+            VGA_MEMORY[row * VGA_WIDTH + col] = make_vga_entry(' ', terminal_color);
+        }
+    }
+    terminal_row = 0;
+    terminal_column = 0;
+}
+
 static void terminal_newline(void) {
     terminal_column = 0;
     if (++terminal_row >= VGA_HEIGHT) {
@@ -58,6 +68,17 @@ static void terminal_newline(void) {
 void terminal_putc(char c) {
     if (c == '\n') {
         terminal_newline();
+        return;
+    }
+
+    if (c == '\b') {
+        if (terminal_column > 0) {
+            --terminal_column;
+        } else if (terminal_row > 0) {
+            --terminal_row;
+            terminal_column = VGA_WIDTH - 1;
+        }
+        VGA_MEMORY[terminal_row * VGA_WIDTH + terminal_column] = make_vga_entry(' ', terminal_color);
         return;
     }
 

@@ -10,7 +10,7 @@ NASM := nasm
 CFLAGS := -m64 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Werror -nostdlib -nostdinc -fno-builtin -I include
 LDFLAGS := -nostdlib -z max-page-size=0x1000
 
-SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c
+SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c
 OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
 
 .PHONY: all clean run iso
