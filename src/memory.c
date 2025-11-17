@@ -238,3 +238,7 @@ void kfree(void *ptr) {
 size_t memory_bytes_used(void) {
     return bytes_used;
 }
+
+size_t memory_heap_size(void) {
+    return heap_size;
+}
