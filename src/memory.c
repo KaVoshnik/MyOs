@@ -124,9 +124,9 @@ void *kmalloc_aligned(size_t size, size_t alignment) {
         return NULL;
     }
     
-    /* Align the pointer */
     uintptr_t addr = (uintptr_t)ptr;
-    uintptr_t aligned_addr = (addr + alignment - 1) & ~(alignment - 1);
+    uintptr_t adjusted = addr + sizeof(uintptr_t);
+    uintptr_t aligned_addr = (adjusted + alignment - 1) & ~(alignment - 1);
     
     /* Store the original block header pointer before the aligned address */
     block_header_t *original_block = (block_header_t *)(addr - sizeof(block_header_t));
