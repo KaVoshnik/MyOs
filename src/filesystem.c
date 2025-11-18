@@ -20,7 +20,7 @@ static fs_node_t *fs_cwd = NULL;
 #define FS_IMAGE_MAGIC        0x4D594653u
 #define FS_IMAGE_VERSION      1u
 #define FS_IMAGE_LBA_START    2048u
-#define FS_IMAGE_LBA_COUNT    2048u
+#define FS_IMAGE_LBA_COUNT    256u
 #define FS_IMAGE_SECTOR_SIZE  512u
 #define FS_IMAGE_BUFFER_SIZE  (FS_IMAGE_LBA_COUNT * FS_IMAGE_SECTOR_SIZE)
 
@@ -335,11 +335,17 @@ void fs_init(void) {
     }
     fs_root->parent = fs_root;
     fs_cwd = fs_root;
-    if (fs_load() != FS_OK) {
-        fs_seed();
-        if (fs_persistence_available()) {
-            fs_save();
+    
+    if (fs_persistence_available() && !fs_image_buffer) {
+        fs_image_buffer = (uint8_t *)kmalloc(FS_IMAGE_BUFFER_SIZE);
+        if (fs_image_buffer && fs_load() == FS_OK) {
+            return;
         }
+    }
+    
+    fs_seed();
+    if (fs_persistence_available() && fs_image_buffer) {
+        fs_save();
     }
 }
 
@@ -649,10 +655,7 @@ static fs_status_t fs_serialize_node(fs_stream_t *stream, fs_node_t *node, uint3
 
 static fs_status_t fs_serialize_to_buffer(size_t *out_size) {
     if (!fs_image_buffer) {
-        fs_image_buffer = (uint8_t *)kmalloc(FS_IMAGE_BUFFER_SIZE);
-        if (!fs_image_buffer) {
-            return FS_ERR_NOMEM;
-        }
+        return FS_ERR_NOMEM;
     }
 
     fs_stream_t stream = {
@@ -790,10 +793,7 @@ fs_status_t fs_load(void) {
     }
 
     if (!fs_image_buffer) {
-        fs_image_buffer = (uint8_t *)kmalloc(FS_IMAGE_BUFFER_SIZE);
-        if (!fs_image_buffer) {
-            return FS_ERR_NOMEM;
-        }
+        return FS_ERR_NOMEM;
     }
 
     if (ata_read_sectors(FS_IMAGE_LBA_START, FS_IMAGE_LBA_COUNT, fs_image_buffer) != 0) {
