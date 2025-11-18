@@ -5,6 +5,7 @@
 #include <string.h>
 #include <memory.h>
 #include <filesystem.h>
+#include <system.h>
 
 #define SHELL_BUFFER_SIZE 256
 
@@ -21,6 +22,26 @@ static void print_uint64(uint64_t value) {
         }
     }
     terminal_write(&buffer[i]);
+}
+
+static void shell_build_prompt_path(char *buffer, size_t buffer_size) {
+    if (buffer_size == 0) {
+        return;
+    }
+    char path[FS_MAX_PATH_LEN];
+    fs_get_cwd(path, sizeof(path));
+    if (path[0] == '/' && path[1] == '\0') {
+        buffer[0] = '~';
+        buffer[1] = '\0';
+        return;
+    }
+    size_t pos = 0;
+    buffer[pos++] = '~';
+    const char *src = (path[0] == '/') ? path + 1 : path;
+    while (*src && pos < buffer_size - 1) {
+        buffer[pos++] = *src++;
+    }
+    buffer[pos] = '\0';
 }
 
 static const char *shell_skip_spaces(const char *str) {
@@ -92,8 +113,14 @@ static void shell_print_fs_error(fs_status_t status) {
 }
 
 static void shell_print_prompt(void) {
+    char prompt_path[FS_MAX_PATH_LEN];
+    shell_build_prompt_path(prompt_path, sizeof(prompt_path));
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
-    terminal_write("myos> ");
+    terminal_write("myos ");
+    terminal_set_color(TERMINAL_COLOR_LIGHT_CYAN, TERMINAL_COLOR_BLACK);
+    terminal_write(prompt_path);
+    terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
+    terminal_write("> ");
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
 }
 
@@ -116,6 +143,8 @@ static void shell_cmd_help(void) {
     terminal_write_line("  rm [-r] PATH - remove file or directory");
     terminal_write_line("  savefs     - persist filesystem to disk");
     terminal_write_line("  loadfs     - reload filesystem from disk");
+    terminal_write_line("  poweroff   - shut down the system");
+    terminal_write_line("  reboot     - restart the system");
 }
 
 static void shell_cmd_clear(void) {
@@ -124,9 +153,36 @@ static void shell_cmd_clear(void) {
 
 static void shell_cmd_uptime(void) {
     uint64_t seconds = pit_seconds();
+    struct {
+        uint64_t unit_seconds;
+        const char *singular;
+        const char *plural;
+    } units[] = {
+        { 24ULL * 60ULL * 60ULL, "day", "days" },
+        { 60ULL * 60ULL, "hour", "hours" },
+        { 60ULL, "min", "mins" },
+        { 1ULL, "sec", "secs" }
+    };
+
     terminal_write("Uptime: ");
-    print_uint64(seconds);
-    terminal_write_line(" s");
+    int printed = 0;
+    for (size_t i = 0; i < sizeof(units) / sizeof(units[0]); ++i) {
+        if (seconds >= units[i].unit_seconds) {
+            uint64_t value = seconds / units[i].unit_seconds;
+            seconds %= units[i].unit_seconds;
+            if (printed) {
+                terminal_write(", ");
+            }
+            print_uint64(value);
+            terminal_write(" ");
+            terminal_write(value == 1 ? units[i].singular : units[i].plural);
+            printed = 1;
+        }
+    }
+    if (!printed) {
+        terminal_write("0 secs");
+    }
+    terminal_write_line("");
 }
 
 static void shell_cmd_mem(void) {
@@ -266,7 +322,7 @@ static void shell_cmd_savefs(void) {
     }
     fs_status_t status = fs_save();
     if (status == FS_OK) {
-        terminal_write_line("Filesystem saved.");
+        terminal_write_line("Filesystem snapshot saved to disk.");
     } else {
         shell_print_fs_error(status);
     }
@@ -283,6 +339,19 @@ static void shell_cmd_loadfs(void) {
     } else {
         shell_print_fs_error(status);
     }
+}
+
+static void shell_cmd_poweroff(void) {
+    if (fs_persistence_available()) {
+        terminal_write_line("Tip: run 'savefs' to persist changes before shutdown.");
+    }
+    terminal_write_line("Powering off...");
+    system_poweroff();
+}
+
+static void shell_cmd_reboot(void) {
+    terminal_write_line("Rebooting...");
+    system_reboot();
 }
 
 static void shell_cmd_cat(const char *args) {
@@ -537,6 +606,18 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "poweroff")) != NULL) {
+        (void)args;
+        shell_cmd_poweroff();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "reboot")) != NULL) {
+        (void)args;
+        shell_cmd_reboot();
+        return;
+    }
+
     terminal_write("Unknown command: ");
     terminal_write_line(line);
     terminal_write_line("Type 'help' for the list of commands.");
@@ -546,7 +627,7 @@ void shell_run(void) {
     static char buffer[SHELL_BUFFER_SIZE];
 
     terminal_write_line("");
-    terminal_write_line("Simple shell ready. Type 'help' to begin.");
+    terminal_write_line("Simple shell ready. Type 'help' for commands, 'poweroff' to exit.");
 
     while (1) {
         shell_print_prompt();

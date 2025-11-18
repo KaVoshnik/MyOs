@@ -1,5 +1,6 @@
 #include <terminal.h>
 #include <string.h>
+#include <io.h>
 
 static volatile uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
 static const size_t VGA_WIDTH = 80;
@@ -17,6 +18,14 @@ static inline uint16_t make_vga_entry(char c, uint8_t color) {
     return (uint16_t)c | ((uint16_t)color << 8);
 }
 
+static void terminal_update_cursor(void) {
+    uint16_t position = (uint16_t)(terminal_row * VGA_WIDTH + terminal_column);
+    outb(0x3D4, 0x0F);
+    outb(0x3D5, (uint8_t)(position & 0xFF));
+    outb(0x3D4, 0x0E);
+    outb(0x3D5, (uint8_t)((position >> 8) & 0xFF));
+}
+
 static void terminal_scroll(void) {
     for (size_t row = 1; row < VGA_HEIGHT; ++row) {
         for (size_t col = 0; col < VGA_WIDTH; ++col) {
@@ -30,6 +39,7 @@ static void terminal_scroll(void) {
 
     terminal_row = VGA_HEIGHT - 1;
     terminal_column = 0;
+    terminal_update_cursor();
 }
 
 void terminal_initialize(void) {
@@ -42,6 +52,7 @@ void terminal_initialize(void) {
             VGA_MEMORY[row * VGA_WIDTH + col] = make_vga_entry(' ', terminal_color);
         }
     }
+    terminal_update_cursor();
 }
 
 void terminal_set_color(enum terminal_color fg, enum terminal_color bg) {
@@ -56,13 +67,16 @@ void terminal_clear(void) {
     }
     terminal_row = 0;
     terminal_column = 0;
+    terminal_update_cursor();
 }
 
 static void terminal_newline(void) {
     terminal_column = 0;
     if (++terminal_row >= VGA_HEIGHT) {
         terminal_scroll();
+        return;
     }
+    terminal_update_cursor();
 }
 
 void terminal_putc(char c) {
@@ -79,6 +93,7 @@ void terminal_putc(char c) {
             terminal_column = VGA_WIDTH - 1;
         }
         VGA_MEMORY[terminal_row * VGA_WIDTH + terminal_column] = make_vga_entry(' ', terminal_color);
+        terminal_update_cursor();
         return;
     }
 
@@ -86,7 +101,9 @@ void terminal_putc(char c) {
 
     if (++terminal_column >= VGA_WIDTH) {
         terminal_newline();
+        return;
     }
+    terminal_update_cursor();
 }
 
 void terminal_write(const char *data) {
