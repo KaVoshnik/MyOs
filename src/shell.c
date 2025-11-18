@@ -4,6 +4,7 @@
 #include <pit.h>
 #include <string.h>
 #include <memory.h>
+#include <filesystem.h>
 
 #define SHELL_BUFFER_SIZE 256
 
@@ -22,6 +23,71 @@ static void print_uint64(uint64_t value) {
     terminal_write(&buffer[i]);
 }
 
+static const char *shell_skip_spaces(const char *str) {
+    while (str && *str == ' ') {
+        ++str;
+    }
+    return str;
+}
+
+static const char *shell_match_command(const char *line, const char *command) {
+    size_t len = strlen(command);
+    if (strncmp(line, command, len) != 0) {
+        return NULL;
+    }
+    if (line[len] == '\0') {
+        return line + len;
+    }
+    if (line[len] == ' ') {
+        return shell_skip_spaces(line + len + 1);
+    }
+    return NULL;
+}
+
+static const char *shell_extract_token(const char *input, char *buffer, size_t buffer_size) {
+    input = shell_skip_spaces(input);
+    if (!input || *input == '\0') {
+        buffer[0] = '\0';
+        return input;
+    }
+
+    size_t i = 0;
+    while (*input != '\0' && *input != ' ') {
+        if (i < buffer_size - 1) {
+            buffer[i++] = *input;
+        }
+        ++input;
+    }
+    buffer[i] = '\0';
+    return shell_skip_spaces(input);
+}
+
+static void shell_print_fs_error(fs_status_t status) {
+    switch (status) {
+        case FS_ERR_NOENT:
+            terminal_write_line("Filesystem error: path not found.");
+            break;
+        case FS_ERR_EXIST:
+            terminal_write_line("Filesystem error: already exists.");
+            break;
+        case FS_ERR_NOTDIR:
+            terminal_write_line("Filesystem error: not a directory.");
+            break;
+        case FS_ERR_ISDIR:
+            terminal_write_line("Filesystem error: path is a directory.");
+            break;
+        case FS_ERR_NOMEM:
+            terminal_write_line("Filesystem error: out of memory.");
+            break;
+        case FS_ERR_INVALID:
+            terminal_write_line("Filesystem error: invalid path.");
+            break;
+        default:
+            terminal_write_line("Filesystem error: unknown.");
+            break;
+    }
+}
+
 static void shell_print_prompt(void) {
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
     terminal_write("myos> ");
@@ -36,6 +102,13 @@ static void shell_cmd_help(void) {
     terminal_write_line("  mem        - show heap usage");
     terminal_write_line("  testmem    - test memory allocator");
     terminal_write_line("  echo TEXT  - print TEXT");
+    terminal_write_line("  pwd        - show current directory");
+    terminal_write_line("  ls [PATH]  - list directory contents");
+    terminal_write_line("  cd PATH    - change directory");
+    terminal_write_line("  touch PATH - create/truncate a file");
+    terminal_write_line("  cat PATH   - print file contents");
+    terminal_write_line("  write PATH DATA  - overwrite file with DATA");
+    terminal_write_line("  append PATH DATA - append DATA to file");
 }
 
 static void shell_cmd_clear(void) {
@@ -71,6 +144,157 @@ static void shell_cmd_echo(const char *args) {
         return;
     }
     terminal_write_line(args);
+}
+
+static void shell_cmd_pwd(void) {
+    char path[FS_MAX_PATH_LEN];
+    fs_get_cwd(path, sizeof(path));
+    terminal_write_line(path);
+}
+
+static void shell_ls_callback(const fs_dir_entry_t *entry, void *user_data) {
+    (void)user_data;
+    if (entry->is_directory) {
+        terminal_write("[DIR] ");
+    } else {
+        terminal_write("      ");
+    }
+    terminal_write(entry->name);
+    if (!entry->is_directory) {
+        terminal_write("  ");
+        print_uint64(entry->size);
+        terminal_write(" bytes");
+    }
+    terminal_write_line("");
+}
+
+static void shell_cmd_ls(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (path && *path == '\0') {
+        path = NULL;
+    }
+    fs_status_t status = fs_list_dir(path, shell_ls_callback, NULL);
+    if (status == FS_OK) {
+        return;
+    }
+    if (status == FS_ERR_NOENT) {
+        terminal_write_line("ls: path not found.");
+    } else if (status == FS_ERR_NOTDIR) {
+        terminal_write_line("ls: not a directory.");
+    } else {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_cd(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (!path || *path == '\0') {
+        path = "/";
+    }
+    fs_status_t status = fs_change_dir(path);
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_touch(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (!path || *path == '\0') {
+        terminal_write_line("Usage: touch PATH");
+        return;
+    }
+
+    if (fs_is_dir(path)) {
+        terminal_write_line("touch: cannot operate on a directory.");
+        return;
+    }
+
+    fs_status_t status = fs_create_file(path);
+    if (status == FS_ERR_EXIST) {
+        status = fs_write_file(path, NULL, 0);
+    }
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_cat(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (!path || *path == '\0') {
+        terminal_write_line("Usage: cat PATH");
+        return;
+    }
+
+    if (!fs_exists(path)) {
+        terminal_write_line("cat: file not found.");
+        return;
+    }
+
+    if (fs_is_dir(path)) {
+        terminal_write_line("cat: path is a directory.");
+        return;
+    }
+
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(path, &size);
+    if (!data && size > 0) {
+        terminal_write_line("cat: unable to read file.");
+        return;
+    }
+
+    for (size_t i = 0; i < size; ++i) {
+        terminal_putc((char)data[i]);
+    }
+    terminal_write_line("");
+}
+
+static void shell_cmd_writefile(const char *args, int append) {
+    const char *cmd_name = append ? "append" : "write";
+    char path[FS_MAX_PATH_LEN];
+    const char *data = shell_extract_token(args, path, sizeof(path));
+    if (path[0] == '\0') {
+        terminal_write("Usage: ");
+        terminal_write(cmd_name);
+        terminal_write_line(" PATH DATA");
+        return;
+    }
+
+    if (fs_is_dir(path)) {
+        terminal_write(cmd_name);
+        terminal_write_line(": path is a directory.");
+        return;
+    }
+
+    if (!data) {
+        data = "";
+    }
+    size_t len = strlen(data);
+
+    fs_status_t status;
+    if (append) {
+        status = fs_append_file(path, data, len);
+        if (status == FS_ERR_NOENT) {
+            fs_status_t create_status = fs_create_file(path);
+            if (create_status == FS_OK) {
+                status = fs_append_file(path, data, len);
+            } else {
+                status = create_status;
+            }
+        }
+    } else {
+        if (!fs_exists(path)) {
+            fs_status_t create_status = fs_create_file(path);
+            if (create_status != FS_OK && create_status != FS_ERR_EXIST) {
+                shell_print_fs_error(create_status);
+                return;
+            }
+        }
+        status = fs_write_file(path, data, len);
+    }
+
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
 }
 
 static void shell_cmd_testmem(void) {
@@ -184,6 +408,43 @@ static void shell_execute(const char *line) {
 
     if (strcmp(line, "testmem") == 0) {
         shell_cmd_testmem();
+        return;
+    }
+
+    const char *args;
+
+    if ((args = shell_match_command(line, "pwd")) != NULL) {
+        shell_cmd_pwd();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "ls")) != NULL) {
+        shell_cmd_ls(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "cd")) != NULL) {
+        shell_cmd_cd(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "touch")) != NULL) {
+        shell_cmd_touch(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "cat")) != NULL) {
+        shell_cmd_cat(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "write")) != NULL) {
+        shell_cmd_writefile(args, 0);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "append")) != NULL) {
+        shell_cmd_writefile(args, 1);
         return;
     }
 

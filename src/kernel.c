@@ -4,6 +4,7 @@
 #include <keyboard.h>
 #include <memory.h>
 #include <shell.h>
+#include <filesystem.h>
 
 extern uint8_t _kernel_end;
 
@@ -17,6 +18,9 @@ void kernel_main(void) {
     uintptr_t heap_start = ((uintptr_t)&_kernel_end + 0xFFF) & ~((uintptr_t)0xFFF);
     memory_init(heap_start, 0x100000); /* 1 MiB heap */
     terminal_write_line("[kernel] Heap initialized.");
+
+    fs_init();
+    terminal_write_line("[kernel] Filesystem ready.");
 
     interrupts_disable();
     interrupts_init();
