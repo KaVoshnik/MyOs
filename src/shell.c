@@ -8,6 +8,7 @@
 #include <system.h>
 
 #define SHELL_BUFFER_SIZE 256
+#define SHELL_HISTORY_SIZE 50
 
 static void print_uint64(uint64_t value) {
     char buffer[21];
@@ -145,6 +146,12 @@ static void shell_cmd_help(void) {
     terminal_write_line("  loadfs     - reload filesystem from disk");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
+    terminal_write_line("");
+    terminal_write_line("Shell features:");
+    terminal_write_line("  Up/Down    - navigate command history");
+    terminal_write_line("  Left/Right - move cursor in line");
+    terminal_write_line("  Tab        - autocomplete commands");
+    terminal_write_line("  Ctrl+R     - search history");
 }
 
 static void shell_cmd_clear(void) {
@@ -623,16 +630,282 @@ static void shell_execute(const char *line) {
     terminal_write_line("Type 'help' for the list of commands.");
 }
 
+static const char *shell_commands[] = {
+    "help", "clear", "uptime", "mem", "testmem", "echo", "pwd", "ls", "cd",
+    "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs",
+    "poweroff", "reboot", NULL
+};
+
+static void shell_clear_line(size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+        terminal_putc('\b');
+        terminal_putc(' ');
+        terminal_putc('\b');
+    }
+}
+
+static void shell_redraw_line(const char *line, size_t length) {
+    (void)length;
+    terminal_write(line);
+}
+
+static int shell_autocomplete(const char *prefix, char *result, size_t result_size) {
+    if (!prefix || *prefix == '\0') {
+        return 0;
+    }
+    
+    size_t prefix_len = strlen(prefix);
+    const char *match = NULL;
+    int match_count = 0;
+    
+    for (size_t i = 0; shell_commands[i] != NULL; ++i) {
+        if (strncmp(shell_commands[i], prefix, prefix_len) == 0) {
+            if (match_count == 0) {
+                match = shell_commands[i];
+            }
+            match_count++;
+        }
+    }
+    
+    if (match_count == 1 && match) {
+        size_t match_len = strlen(match);
+        if (match_len < result_size) {
+            memcpy(result, match, match_len);
+            result[match_len] = '\0';
+            return (int)(match_len - prefix_len);
+        }
+    }
+    
+    if (match_count > 1) {
+        terminal_write_line("");
+        for (size_t i = 0; shell_commands[i] != NULL; ++i) {
+            if (strncmp(shell_commands[i], prefix, prefix_len) == 0) {
+                terminal_write("  ");
+                terminal_write_line(shell_commands[i]);
+            }
+        }
+        return -1;
+    }
+    
+    return 0;
+}
+
+static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
+                                           char **history, size_t *history_count,
+                                           size_t *history_index) {
+    if (buffer_size == 0) {
+        return 0;
+    }
+    
+    size_t length = 0;
+    size_t cursor_pos = 0;
+    size_t current_history = *history_index;
+    int in_search = 0;
+    char search_buffer[SHELL_BUFFER_SIZE] = {0};
+    size_t search_len = 0;
+    
+    buffer[0] = '\0';
+    
+    while (1) {
+        uint16_t code;
+        keyboard_read_char_extended(&code);
+        
+        if (code < 256) {
+            char c = (char)code;
+            
+            if (in_search) {
+                if (c == '\b') {
+                    if (search_len > 0) {
+                        search_len--;
+                        search_buffer[search_len] = '\0';
+                        terminal_putc('\b');
+                        terminal_putc(' ');
+                        terminal_putc('\b');
+                    }
+                    continue;
+                }
+                if (c == '\n' || c == '\r') {
+                    in_search = 0;
+                    terminal_write_line("");
+                    if (search_len > 0) {
+                        for (size_t i = *history_count; i > 0; --i) {
+                            if (strstr(history[i - 1], search_buffer) != NULL) {
+                                current_history = i - 1;
+                                memcpy(buffer, history[i - 1], buffer_size);
+                                length = strlen(buffer);
+                                cursor_pos = length;
+                                shell_print_prompt();
+                                terminal_write(buffer);
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (search_len + 1 < sizeof(search_buffer)) {
+                    search_buffer[search_len++] = c;
+                    terminal_putc(c);
+                }
+                continue;
+            }
+            
+            if (c == '\r') {
+                c = '\n';
+            }
+            
+            if (c == '\b') {
+                if (cursor_pos > 0) {
+                    cursor_pos--;
+                    length--;
+                    for (size_t i = cursor_pos; i < length; ++i) {
+                        buffer[i] = buffer[i + 1];
+                    }
+                    buffer[length] = '\0';
+                    shell_clear_line(length + 1);
+                    shell_redraw_line(buffer, length);
+                    for (size_t i = cursor_pos; i < length; ++i) {
+                        terminal_putc('\b');
+                    }
+                }
+                continue;
+            }
+            
+            if (c == '\n') {
+                terminal_putc('\n');
+                if (length > 0 && (*history_count == 0 || strcmp(buffer, history[*history_count - 1]) != 0)) {
+                    if (*history_count < SHELL_HISTORY_SIZE) {
+                        history[*history_count] = (char *)kmalloc(length + 1);
+                        if (history[*history_count]) {
+                            memcpy(history[*history_count], buffer, length + 1);
+                            (*history_count)++;
+                        }
+                    }
+                }
+                *history_index = *history_count;
+                buffer[length] = '\0';
+                return length;
+            }
+            
+            if (c == '\t') {
+                char prefix[SHELL_BUFFER_SIZE] = {0};
+                size_t word_start = cursor_pos;
+                while (word_start > 0 && buffer[word_start - 1] != ' ') {
+                    word_start--;
+                }
+                size_t word_len = cursor_pos - word_start;
+                if (word_len > 0 && word_len < sizeof(prefix)) {
+                    memcpy(prefix, buffer + word_start, word_len);
+                    prefix[word_len] = '\0';
+                    
+                    char result[SHELL_BUFFER_SIZE];
+                    int added = shell_autocomplete(prefix, result, sizeof(result));
+                    if (added > 0) {
+                        size_t result_len = strlen(result);
+                        size_t to_add = result_len - word_len;
+                        if (length + to_add + 1 < buffer_size) {
+                            for (size_t i = length; i > cursor_pos; --i) {
+                                buffer[i + to_add] = buffer[i];
+                            }
+                            memcpy(buffer + word_start, result, result_len);
+                            length += to_add;
+                            cursor_pos = word_start + result_len;
+                            shell_clear_line(length - to_add);
+                            shell_redraw_line(buffer, length);
+                        }
+                    } else if (added < 0) {
+                        shell_print_prompt();
+                        shell_redraw_line(buffer, length);
+                    }
+                }
+                continue;
+            }
+            
+            if (length + 1 < buffer_size) {
+                for (size_t i = length; i > cursor_pos; --i) {
+                    buffer[i] = buffer[i - 1];
+                }
+                buffer[cursor_pos] = c;
+                cursor_pos++;
+                length++;
+                buffer[length] = '\0';
+                shell_clear_line(length - cursor_pos);
+                terminal_write(buffer + cursor_pos - 1);
+                for (size_t i = cursor_pos; i < length; ++i) {
+                    terminal_putc('\b');
+                }
+            }
+        } else if (code == KEY_SPECIAL_UP) {
+            if (current_history > 0) {
+                current_history--;
+                if (history[current_history]) {
+                    size_t hist_len = strlen(history[current_history]);
+                    if (hist_len < buffer_size) {
+                        memcpy(buffer, history[current_history], hist_len + 1);
+                        length = hist_len;
+                        cursor_pos = length;
+                        shell_clear_line(length);
+                        shell_redraw_line(buffer, length);
+                    }
+                }
+            }
+        } else if (code == KEY_SPECIAL_DOWN) {
+            if (current_history < *history_count) {
+                current_history++;
+                if (current_history < *history_count && history[current_history]) {
+                    size_t hist_len = strlen(history[current_history]);
+                    if (hist_len < buffer_size) {
+                        memcpy(buffer, history[current_history], hist_len + 1);
+                        length = hist_len;
+                        cursor_pos = length;
+                    } else {
+                        length = 0;
+                        cursor_pos = 0;
+                        buffer[0] = '\0';
+                    }
+                } else {
+                    length = 0;
+                    cursor_pos = 0;
+                    buffer[0] = '\0';
+                }
+                shell_clear_line(length);
+                shell_redraw_line(buffer, length);
+            }
+        } else if (code == KEY_SPECIAL_LEFT) {
+            if (cursor_pos > 0) {
+                cursor_pos--;
+                terminal_putc('\b');
+            }
+        } else if (code == KEY_SPECIAL_RIGHT) {
+            if (cursor_pos < length) {
+                terminal_putc(buffer[cursor_pos]);
+                cursor_pos++;
+            }
+        } else if (code == KEY_SPECIAL_CTRL_R) {
+            in_search = 1;
+            search_len = 0;
+            search_buffer[0] = '\0';
+            terminal_write_line("");
+            terminal_write("(reverse-i-search)`': ");
+        }
+    }
+}
+
 void shell_run(void) {
     static char buffer[SHELL_BUFFER_SIZE];
+    static char *history[SHELL_HISTORY_SIZE];
+    static size_t history_count = 0;
+    static size_t history_index = 0;
 
     terminal_write_line("");
-    terminal_write_line("Simple shell ready. Type 'help' for commands, 'poweroff' to exit.");
+    terminal_write_line("Simple shell ready. Type 'help' to begin.");
+    terminal_write_line("Tip: Use arrow keys for history, Tab for completion, Ctrl+R for search.");
 
     while (1) {
         shell_print_prompt();
-        keyboard_read_line(buffer, SHELL_BUFFER_SIZE);
-        shell_execute(buffer);
+        shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, history, &history_count, &history_index);
+        if (buffer[0] != '\0') {
+            shell_execute(buffer);
+        }
     }
 }
 

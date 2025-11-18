@@ -28,6 +28,29 @@ int strncmp(const char *a, const char *b, size_t n) {
     return 0;
 }
 
+const char *strstr(const char *haystack, const char *needle) {
+    if (!needle || *needle == '\0') {
+        return haystack;
+    }
+    if (!haystack) {
+        return NULL;
+    }
+    
+    while (*haystack) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && *h == *n) {
+            ++h;
+            ++n;
+        }
+        if (*n == '\0') {
+            return haystack;
+        }
+        ++haystack;
+    }
+    return NULL;
+}
+
 void *memset(void *dest, int value, size_t count) {
     unsigned char *ptr = (unsigned char *)dest;
     while (count--) {

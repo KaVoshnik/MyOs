@@ -32,36 +32,45 @@ static const char keymap_upper[128] = {
     '2', '3', '0', '.'
 };
 
-static volatile char key_buffer[KEYBOARD_BUFFER_SIZE];
+static volatile uint16_t key_buffer[KEYBOARD_BUFFER_SIZE];
 static volatile size_t buffer_head = 0;
 static volatile size_t buffer_tail = 0;
 static int shift_pressed = 0;
+static int ctrl_pressed = 0;
+static int e0_sequence = 0;
 
-static void buffer_push(char c) {
+static void buffer_push(uint16_t code) {
     size_t next_head = (buffer_head + 1) % KEYBOARD_BUFFER_SIZE;
     if (next_head == buffer_tail) {
         return; /* buffer full, drop */
     }
-    key_buffer[buffer_head] = c;
+    key_buffer[buffer_head] = code;
     buffer_head = next_head;
 }
 
-static int buffer_pop(char *c) {
+static int buffer_pop(uint16_t *code) {
     if (buffer_head == buffer_tail) {
         return 0;
     }
-    *c = key_buffer[buffer_tail];
+    *code = key_buffer[buffer_tail];
     buffer_tail = (buffer_tail + 1) % KEYBOARD_BUFFER_SIZE;
     return 1;
 }
 
 void keyboard_init(void) {
     shift_pressed = 0;
+    ctrl_pressed = 0;
+    e0_sequence = 0;
     buffer_head = buffer_tail = 0;
     terminal_write_line("[kbd] Keyboard driver ready");
 }
 
 void keyboard_handle_scancode(uint8_t scancode) {
+    if (scancode == 0xE0) {
+        e0_sequence = 1;
+        return;
+    }
+
     if (scancode == 0x2A || scancode == 0x36) {
         shift_pressed = 1;
         return;
@@ -71,8 +80,39 @@ void keyboard_handle_scancode(uint8_t scancode) {
         return;
     }
 
+    if (scancode == 0x1D) {
+        ctrl_pressed = 1;
+        return;
+    }
+    if (scancode == 0x9D) {
+        ctrl_pressed = 0;
+        return;
+    }
+
     if (scancode & 0x80) {
+        e0_sequence = 0;
         return; /* key release */
+    }
+
+    if (e0_sequence) {
+        e0_sequence = 0;
+        switch (scancode) {
+            case 0x48: buffer_push(KEY_SPECIAL_UP); return;
+            case 0x50: buffer_push(KEY_SPECIAL_DOWN); return;
+            case 0x4B: buffer_push(KEY_SPECIAL_LEFT); return;
+            case 0x4D: buffer_push(KEY_SPECIAL_RIGHT); return;
+            default: return;
+        }
+    }
+
+    if (scancode == 0x0F) {
+        buffer_push(KEY_SPECIAL_TAB);
+        return;
+    }
+
+    if (ctrl_pressed && scancode == 0x13) {
+        buffer_push(KEY_SPECIAL_CTRL_R);
+        return;
     }
 
     char c = 0;
@@ -81,11 +121,24 @@ void keyboard_handle_scancode(uint8_t scancode) {
     }
 
     if (c) {
-        buffer_push(c);
+        buffer_push((uint16_t)(unsigned char)c);
     }
 }
 
 int keyboard_read_char(char *out_char) {
+    uint16_t code;
+    while (!buffer_pop(&code)) {
+        __asm__ volatile("hlt");
+    }
+    if (code < 256) {
+        *out_char = (char)code;
+        return 1;
+    }
+    *out_char = 0;
+    return 0;
+}
+
+int keyboard_read_char_extended(uint16_t *out_char) {
     while (!buffer_pop(out_char)) {
         __asm__ volatile("hlt");
     }
