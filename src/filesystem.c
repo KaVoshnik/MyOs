@@ -71,6 +71,38 @@ static void fs_attach_child(fs_node_t *parent, fs_node_t *child) {
     parent->children = child;
 }
 
+static void fs_detach_child(fs_node_t *node) {
+    if (!node || !node->parent) {
+        return;
+    }
+
+    fs_node_t **cursor = &node->parent->children;
+    while (*cursor && *cursor != node) {
+        cursor = &(*cursor)->next_sibling;
+    }
+    if (*cursor == node) {
+        *cursor = node->next_sibling;
+    }
+    node->parent = NULL;
+    node->next_sibling = NULL;
+}
+
+static void fs_free_subtree(fs_node_t *node) {
+    if (!node) {
+        return;
+    }
+    fs_node_t *child = node->children;
+    while (child) {
+        fs_node_t *next = child->next_sibling;
+        fs_free_subtree(child);
+        child = next;
+    }
+    if (node->data) {
+        kfree(node->data);
+    }
+    kfree(node);
+}
+
 static fs_node_t *fs_alloc_node(const char *name, fs_node_type_t type) {
     fs_node_t *node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!node) {
@@ -476,6 +508,28 @@ int fs_is_dir(const char *path) {
         return 0;
     }
     return node->type == FS_NODE_DIRECTORY;
+}
+
+fs_status_t fs_remove(const char *path, int recursive) {
+    fs_node_t *node = fs_walk(path);
+    if (!node) {
+        return FS_ERR_NOENT;
+    }
+    if (node == fs_root) {
+        return FS_ERR_INVALID;
+    }
+
+    if (node->type == FS_NODE_DIRECTORY && node->children && !recursive) {
+        return FS_ERR_NOTEMPTY;
+    }
+
+    if (node == fs_cwd) {
+        fs_cwd = node->parent ? node->parent : fs_root;
+    }
+
+    fs_detach_child(node);
+    fs_free_subtree(node);
+    return FS_OK;
 }
 
 

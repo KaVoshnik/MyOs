@@ -82,6 +82,9 @@ static void shell_print_fs_error(fs_status_t status) {
         case FS_ERR_INVALID:
             terminal_write_line("Filesystem error: invalid path.");
             break;
+        case FS_ERR_NOTEMPTY:
+            terminal_write_line("Filesystem error: directory not empty.");
+            break;
         default:
             terminal_write_line("Filesystem error: unknown.");
             break;
@@ -109,6 +112,8 @@ static void shell_cmd_help(void) {
     terminal_write_line("  cat PATH   - print file contents");
     terminal_write_line("  write PATH DATA  - overwrite file with DATA");
     terminal_write_line("  append PATH DATA - append DATA to file");
+    terminal_write_line("  mkdir PATH - create directory");
+    terminal_write_line("  rm [-r] PATH - remove file or directory");
 }
 
 static void shell_cmd_clear(void) {
@@ -213,6 +218,40 @@ static void shell_cmd_touch(const char *args) {
     if (status == FS_ERR_EXIST) {
         status = fs_write_file(path, NULL, 0);
     }
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_mkdir(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (!path || *path == '\0') {
+        terminal_write_line("Usage: mkdir PATH");
+        return;
+    }
+
+    fs_status_t status = fs_mkdir(path);
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_rm(const char *args) {
+    char token[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, token, sizeof(token));
+    int recursive = 0;
+
+    if (strcmp(token, "-r") == 0 || strcmp(token, "--recursive") == 0) {
+        recursive = 1;
+        rest = shell_extract_token(rest, token, sizeof(token));
+    }
+
+    if (token[0] == '\0') {
+        terminal_write_line("Usage: rm [-r] PATH");
+        return;
+    }
+
+    fs_status_t status = fs_remove(token, recursive);
     if (status != FS_OK) {
         shell_print_fs_error(status);
     }
@@ -445,6 +484,16 @@ static void shell_execute(const char *line) {
 
     if ((args = shell_match_command(line, "append")) != NULL) {
         shell_cmd_writefile(args, 1);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "mkdir")) != NULL) {
+        shell_cmd_mkdir(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "rm")) != NULL) {
+        shell_cmd_rm(args);
         return;
     }
 

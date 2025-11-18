@@ -7,11 +7,11 @@
 typedef struct block_header {
     size_t size;
     struct block_header *next;
+    struct block_header *prev;
     int free;
 } block_header_t;
 
 static block_header_t *heap_start = NULL;
-static block_header_t *free_list = NULL;
 static size_t heap_size = 0;
 static size_t bytes_used = 0;
 
@@ -20,8 +20,8 @@ static size_t align_size(size_t size) {
 }
 
 static block_header_t *find_free_block(size_t size) {
-    block_header_t *current = free_list;
-    while (current != NULL) {
+    block_header_t *current = heap_start;
+    while (current) {
         if (current->free && current->size >= size) {
             return current;
         }
@@ -30,45 +30,44 @@ static block_header_t *find_free_block(size_t size) {
     return NULL;
 }
 
-static block_header_t *request_space(size_t size) {
-    block_header_t *block;
-    
-    if (heap_start == NULL) {
-        return NULL;
+static void split_block(block_header_t *block, size_t size) {
+    if (block->size - size < sizeof(block_header_t) + MIN_BLOCK_SIZE) {
+        return;
     }
-    
-    block_header_t *last = heap_start;
-    while (last->next != NULL) {
-        last = last->next;
+
+    block_header_t *new_block = (block_header_t *)((uintptr_t)block + sizeof(block_header_t) + size);
+    new_block->size = block->size - size - sizeof(block_header_t);
+    new_block->free = 1;
+    new_block->prev = block;
+    new_block->next = block->next;
+    if (new_block->next) {
+        new_block->next->prev = new_block;
     }
-    
-    uintptr_t next_addr = (uintptr_t)last + sizeof(block_header_t) + last->size;
-    if (next_addr + sizeof(block_header_t) + size > (uintptr_t)heap_start + heap_size) {
-        return NULL; /* Out of memory */
-    }
-    
-    block = (block_header_t *)next_addr;
+
     block->size = size;
-    block->free = 0;
-    block->next = NULL;
-    last->next = block;
-    
-    bytes_used += size;
-    return block;
+    block->next = new_block;
 }
 
-static void split_block(block_header_t *block, size_t size) {
-    if (block->size - size >= sizeof(block_header_t) + MIN_BLOCK_SIZE) {
-        block_header_t *new_block = (block_header_t *)((uintptr_t)block + sizeof(block_header_t) + size);
-        new_block->size = block->size - size - sizeof(block_header_t);
-        new_block->free = 1;
-        new_block->next = block->next;
-        block->next = new_block;
-        block->size = size;
-        
-        /* Add to free list */
-        new_block->next = free_list;
-        free_list = new_block;
+static void coalesce(block_header_t *block) {
+    if (block->next && block->next->free &&
+        ((uintptr_t)block->next == (uintptr_t)block + sizeof(block_header_t) + block->size)) {
+        block_header_t *next = block->next;
+        block->size += sizeof(block_header_t) + next->size;
+        block->next = next->next;
+        if (block->next) {
+            block->next->prev = block;
+        }
+    }
+
+    if (block->prev && block->prev->free &&
+        ((uintptr_t)block == (uintptr_t)block->prev + sizeof(block_header_t) + block->prev->size)) {
+        block_header_t *prev = block->prev;
+        prev->size += sizeof(block_header_t) + block->size;
+        prev->next = block->next;
+        if (block->next) {
+            block->next->prev = prev;
+        }
+        block = prev;
     }
 }
 
@@ -76,13 +75,11 @@ void memory_init(uintptr_t heap_start_addr, size_t size) {
     heap_start = (block_header_t *)heap_start_addr;
     heap_size = size;
     bytes_used = 0;
-    free_list = NULL;
     
-    /* Initialize first block as free */
     heap_start->size = size - sizeof(block_header_t);
     heap_start->free = 1;
     heap_start->next = NULL;
-    free_list = heap_start;
+    heap_start->prev = NULL;
 }
 
 void *kmalloc(size_t size) {
@@ -96,30 +93,14 @@ void *kmalloc(size_t size) {
     }
     
     block_header_t *block = find_free_block(size);
-    
-    if (block == NULL) {
-        block = request_space(size);
-        if (block == NULL) {
-            return NULL; /* Out of memory */
-        }
-    } else {
-        /* Remove from free list */
-        if (free_list == block) {
-            free_list = block->next;
-        } else {
-            block_header_t *prev = free_list;
-            while (prev != NULL && prev->next != block) {
-                prev = prev->next;
-            }
-            if (prev != NULL) {
-                prev->next = block->next;
-            }
-        }
-        block->free = 0;
-        bytes_used += block->size;
-        split_block(block, size);
+    if (!block) {
+        return NULL;
     }
-    
+
+    split_block(block, size);
+    block->free = 0;
+    bytes_used += block->size;
+
     return (void *)((uintptr_t)block + sizeof(block_header_t));
 }
 
@@ -198,41 +179,7 @@ void kfree(void *ptr) {
     bytes_used -= block->size;
     block->free = 1;
     
-    /* Add to free list */
-    block->next = free_list;
-    free_list = block;
-    
-    /* Try to merge with next block */
-    if (block->next != NULL && (uintptr_t)block->next == (uintptr_t)block + sizeof(block_header_t) + block->size) {
-        if (block->next->free) {
-            block->size += sizeof(block_header_t) + block->next->size;
-            block->next = block->next->next;
-        }
-    }
-    
-    /* Try to merge with previous block */
-    block_header_t *current = heap_start;
-    while (current != NULL && current->next != block) {
-        current = current->next;
-    }
-    if (current != NULL && current->free && 
-        (uintptr_t)block == (uintptr_t)current + sizeof(block_header_t) + current->size) {
-        current->size += sizeof(block_header_t) + block->size;
-        current->next = block->next;
-        
-        /* Remove block from free list */
-        if (free_list == block) {
-            free_list = block->next;
-        } else {
-            block_header_t *prev = free_list;
-            while (prev != NULL && prev->next != block) {
-                prev = prev->next;
-            }
-            if (prev != NULL) {
-                prev->next = block->next;
-            }
-        }
-    }
+    coalesce(block);
 }
 
 size_t memory_bytes_used(void) {

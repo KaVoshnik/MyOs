@@ -25,7 +25,8 @@ typedef enum fs_status {
     FS_ERR_NOTDIR = -3,
     FS_ERR_ISDIR = -4,
     FS_ERR_NOMEM = -5,
-    FS_ERR_INVALID = -6
+    FS_ERR_INVALID = -6,
+    FS_ERR_NOTEMPTY = -7
 } fs_status_t;
 
 typedef void (*fs_list_callback_t)(const fs_dir_entry_t *entry, void *user_data);
@@ -42,6 +43,7 @@ fs_status_t fs_change_dir(const char *path);
 void fs_get_cwd(char *buffer, size_t buffer_size);
 int fs_exists(const char *path);
 int fs_is_dir(const char *path);
+fs_status_t fs_remove(const char *path, int recursive);
 
 #endif /* _MYOS_FILESYSTEM_H */
 
