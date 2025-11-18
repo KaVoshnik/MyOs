@@ -44,6 +44,9 @@ void fs_get_cwd(char *buffer, size_t buffer_size);
 int fs_exists(const char *path);
 int fs_is_dir(const char *path);
 fs_status_t fs_remove(const char *path, int recursive);
+fs_status_t fs_save(void);
+fs_status_t fs_load(void);
+int fs_persistence_available(void);
 
 #endif /* _MYOS_FILESYSTEM_H */
 

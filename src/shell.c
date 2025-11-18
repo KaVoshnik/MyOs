@@ -114,6 +114,8 @@ static void shell_cmd_help(void) {
     terminal_write_line("  append PATH DATA - append DATA to file");
     terminal_write_line("  mkdir PATH - create directory");
     terminal_write_line("  rm [-r] PATH - remove file or directory");
+    terminal_write_line("  savefs     - persist filesystem to disk");
+    terminal_write_line("  loadfs     - reload filesystem from disk");
 }
 
 static void shell_cmd_clear(void) {
@@ -253,6 +255,32 @@ static void shell_cmd_rm(const char *args) {
 
     fs_status_t status = fs_remove(token, recursive);
     if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_savefs(void) {
+    if (!fs_persistence_available()) {
+        terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        return;
+    }
+    fs_status_t status = fs_save();
+    if (status == FS_OK) {
+        terminal_write_line("Filesystem saved.");
+    } else {
+        shell_print_fs_error(status);
+    }
+}
+
+static void shell_cmd_loadfs(void) {
+    if (!fs_persistence_available()) {
+        terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        return;
+    }
+    fs_status_t status = fs_load();
+    if (status == FS_OK) {
+        terminal_write_line("Filesystem reloaded from disk.");
+    } else {
         shell_print_fs_error(status);
     }
 }
@@ -494,6 +522,18 @@ static void shell_execute(const char *line) {
 
     if ((args = shell_match_command(line, "rm")) != NULL) {
         shell_cmd_rm(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "savefs")) != NULL) {
+        (void)args;
+        shell_cmd_savefs();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "loadfs")) != NULL) {
+        (void)args;
+        shell_cmd_loadfs();
         return;
     }
 

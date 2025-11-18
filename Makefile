@@ -2,6 +2,8 @@ BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 KERNEL := $(BUILD_DIR)/kernel.elf
 ISO_IMAGE := $(BUILD_DIR)/MyOs.iso
+DISK_IMAGE := $(BUILD_DIR)/myos_disk.img
+DISK_SIZE_MB := 8
 
 CC := x86_64-elf-gcc
 LD := x86_64-elf-ld
@@ -10,7 +12,7 @@ NASM := nasm
 CFLAGS := -m64 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Werror -nostdlib -nostdinc -fno-builtin -I include
 LDFLAGS := -nostdlib -z max-page-size=0x1000
 
-SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c
+SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c
 OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
 
 .PHONY: all clean run iso
@@ -38,8 +40,11 @@ $(ISO_DIR): $(KERNEL)
 $(ISO_IMAGE): $(ISO_DIR)
 	grub-mkrescue -o $@ $(ISO_DIR)
 
-run: $(ISO_IMAGE)
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE)
+$(DISK_IMAGE): | $(BUILD_DIR)
+	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
+
+run: $(ISO_IMAGE) $(DISK_IMAGE)
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive file=$(DISK_IMAGE),if=ide,format=raw
 
 clean:
 	rm -rf $(BUILD_DIR)
