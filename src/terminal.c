@@ -117,3 +117,24 @@ void terminal_write_line(const char *data) {
     terminal_putc('\n');
 }
 
+void terminal_get_cursor(size_t *row, size_t *column) {
+    if (row) {
+        *row = terminal_row;
+    }
+    if (column) {
+        *column = terminal_column;
+    }
+}
+
+void terminal_set_cursor(size_t row, size_t column) {
+    if (row >= VGA_HEIGHT) {
+        row = VGA_HEIGHT - 1;
+    }
+    if (column >= VGA_WIDTH) {
+        column = VGA_WIDTH - 1;
+    }
+    terminal_row = row;
+    terminal_column = column;
+    terminal_update_cursor();
+}
+

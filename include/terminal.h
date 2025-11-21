@@ -29,6 +29,8 @@ void terminal_write(const char *data);
 void terminal_write_line(const char *data);
 void terminal_putc(char c);
 void terminal_clear(void);
+void terminal_get_cursor(size_t *row, size_t *column);
+void terminal_set_cursor(size_t row, size_t column);
 
 #endif /* _MYOS_TERMINAL_H */
 
