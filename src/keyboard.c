@@ -145,6 +145,10 @@ int keyboard_read_char_extended(uint16_t *out_char) {
     return 1;
 }
 
+int keyboard_try_read_char_extended(uint16_t *out_char) {
+    return buffer_pop(out_char);
+}
+
 size_t keyboard_read_line(char *buffer, size_t buffer_size) {
     if (buffer_size == 0) {
         return 0;

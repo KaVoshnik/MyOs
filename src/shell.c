@@ -9,10 +9,13 @@
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
+#define SHELL_AUTOCOMPLETE_MAX_MATCHES 32
+#define SHELL_AUTOSAVE_INTERVAL_SECONDS 60
 
 static char *shell_history_data[SHELL_HISTORY_SIZE];
 static size_t shell_history_count = 0;
 static size_t shell_history_index = 0;
+static uint64_t shell_last_autosave_seconds = 0;
 
 static void print_uint64(uint64_t value) {
     char buffer[21];
@@ -157,6 +160,7 @@ static void shell_cmd_help(void) {
     terminal_write_line("  Left/Right - move cursor in line");
     terminal_write_line("  Tab        - autocomplete commands");
     terminal_write_line("  Ctrl+R     - search history");
+    terminal_write_line("  Autosave   - snapshot every minute when disk is attached");
 }
 
 static void shell_cmd_clear(void) {
@@ -664,6 +668,41 @@ static const char *shell_commands[] = {
     "poweroff", "reboot", NULL
 };
 
+static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
+    size_t prefix_len = prefix ? strlen(prefix) : 0;
+    size_t count = 0;
+    for (size_t i = 0; shell_commands[i] != NULL; ++i) {
+        if (prefix_len == 0 || strncmp(shell_commands[i], prefix, prefix_len) == 0) {
+            if (count < max_matches) {
+                matches[count++] = shell_commands[i];
+            }
+        }
+    }
+    return count;
+}
+
+static size_t shell_common_prefix_length(const char **matches, size_t match_count) {
+    if (match_count == 0) {
+        return 0;
+    }
+    size_t min_len = strlen(matches[0]);
+    for (size_t i = 1; i < match_count; ++i) {
+        size_t len = strlen(matches[i]);
+        if (len < min_len) {
+            min_len = len;
+        }
+    }
+    for (size_t pos = 0; pos < min_len; ++pos) {
+        char ch = matches[0][pos];
+        for (size_t i = 1; i < match_count; ++i) {
+            if (matches[i][pos] != ch) {
+                return pos;
+            }
+        }
+    }
+    return min_len;
+}
+
 static void shell_refresh_input(const char *buffer, size_t length, size_t cursor_pos,
                                 size_t prompt_row, size_t prompt_col,
                                 size_t *rendered_length) {
@@ -715,45 +754,31 @@ static void shell_history_append(char **history, size_t *history_count, size_t *
     }
 }
 
-static int shell_autocomplete(const char *prefix, char *result, size_t result_size) {
-    if (!prefix || *prefix == '\0') {
+static int shell_maybe_autosave(void) {
+    uint64_t now = pit_seconds();
+    if (shell_last_autosave_seconds == 0 || now < shell_last_autosave_seconds) {
+        shell_last_autosave_seconds = now;
         return 0;
     }
-    
-    size_t prefix_len = strlen(prefix);
-    const char *match = NULL;
-    int match_count = 0;
-    
-    for (size_t i = 0; shell_commands[i] != NULL; ++i) {
-        if (strncmp(shell_commands[i], prefix, prefix_len) == 0) {
-            if (match_count == 0) {
-                match = shell_commands[i];
-            }
-            match_count++;
-        }
+
+    if (!fs_persistence_available()) {
+        shell_last_autosave_seconds = now;
+        return 0;
     }
-    
-    if (match_count == 1 && match) {
-        size_t match_len = strlen(match);
-        if (match_len < result_size) {
-            memcpy(result, match, match_len);
-            result[match_len] = '\0';
-            return (int)(match_len - prefix_len);
-        }
+
+    if ((now - shell_last_autosave_seconds) < SHELL_AUTOSAVE_INTERVAL_SECONDS) {
+        return 0;
     }
-    
-    if (match_count > 1) {
-        terminal_write_line("");
-        for (size_t i = 0; shell_commands[i] != NULL; ++i) {
-            if (strncmp(shell_commands[i], prefix, prefix_len) == 0) {
-                terminal_write("  ");
-                terminal_write_line(shell_commands[i]);
-            }
-        }
-        return -1;
+
+    shell_last_autosave_seconds = now;
+    fs_status_t status = fs_save();
+    if (status == FS_OK) {
+        terminal_write_line("[autosave] Filesystem snapshot saved.");
+    } else {
+        terminal_write("[autosave] ");
+        shell_print_fs_error(status);
     }
-    
-    return 0;
+    return 1;
 }
 
 static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
@@ -778,8 +803,16 @@ static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
     
     while (1) {
         uint16_t code;
-        keyboard_read_char_extended(&code);
-        
+        while (!keyboard_try_read_char_extended(&code)) {
+            if (shell_maybe_autosave()) {
+                shell_print_prompt();
+                terminal_get_cursor(&prompt_row, &prompt_col);
+                rendered_length = 0;
+                shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
+            }
+            __asm__ volatile("hlt");
+        }
+
         if (code < 256) {
             char c = (char)code;
             
@@ -863,27 +896,55 @@ static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
                 if (word_len > 0 && word_len < sizeof(prefix)) {
                     memcpy(prefix, buffer + word_start, word_len);
                     prefix[word_len] = '\0';
-                    
-                    char result[SHELL_BUFFER_SIZE];
-                    int added = shell_autocomplete(prefix, result, sizeof(result));
-                    if (added > 0) {
-                        size_t result_len = strlen(result);
-                        size_t to_add = result_len - word_len;
+
+                    const char *matches[SHELL_AUTOCOMPLETE_MAX_MATCHES];
+                    size_t match_count = shell_collect_command_matches(prefix, matches, SHELL_AUTOCOMPLETE_MAX_MATCHES);
+
+                    if (match_count == 0) {
+                        terminal_putc('\a');
+                        continue;
+                    }
+
+                    size_t common_len = shell_common_prefix_length(matches, match_count);
+                    if (common_len > word_len) {
+                        size_t to_add = common_len - word_len;
                         if (length + to_add + 1 < buffer_size) {
                             for (size_t i = length; i > cursor_pos; --i) {
                                 buffer[i + to_add] = buffer[i];
                             }
-                            memcpy(buffer + word_start, result, result_len);
+                            memcpy(buffer + word_start, matches[0], common_len);
                             length += to_add;
-                            cursor_pos = word_start + result_len;
+                            cursor_pos = word_start + common_len;
+                            buffer[length] = '\0';
                             shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
                         }
-                    } else if (added < 0) {
-                        shell_print_prompt();
-                        terminal_get_cursor(&prompt_row, &prompt_col);
-                        rendered_length = 0;
-                        shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
+                        continue;
                     }
+
+                    if (match_count == 1) {
+                        size_t match_len = strlen(matches[0]);
+                        if (match_len == word_len && length + 1 < buffer_size) {
+                            for (size_t i = length; i > cursor_pos; --i) {
+                                buffer[i + 1] = buffer[i];
+                            }
+                            buffer[cursor_pos] = ' ';
+                            cursor_pos++;
+                            length++;
+                            buffer[length] = '\0';
+                            shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
+                        }
+                        continue;
+                    }
+
+                    terminal_write_line("");
+                    for (size_t i = 0; i < match_count; ++i) {
+                        terminal_write("  ");
+                        terminal_write_line(matches[i]);
+                    }
+                    shell_print_prompt();
+                    terminal_get_cursor(&prompt_row, &prompt_col);
+                    rendered_length = 0;
+                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
                 }
                 continue;
             }
@@ -960,6 +1021,7 @@ void shell_run(void) {
     terminal_write_line("Tip: Use arrow keys for history, Tab for completion, Ctrl+R for search.");
 
     while (1) {
+        shell_maybe_autosave();
         shell_print_prompt();
         shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, shell_history_data, &shell_history_count, &shell_history_index);
         if (buffer[0] != '\0') {

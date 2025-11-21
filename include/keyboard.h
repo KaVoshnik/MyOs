@@ -15,6 +15,7 @@ void keyboard_init(void);
 void keyboard_handle_scancode(uint8_t scancode);
 int keyboard_read_char(char *out_char);
 int keyboard_read_char_extended(uint16_t *out_char);
+int keyboard_try_read_char_extended(uint16_t *out_char);
 size_t keyboard_read_line(char *buffer, size_t buffer_size);
 size_t keyboard_read_line_with_history(char *buffer, size_t buffer_size, 
                                        const char **history, size_t history_size, 
