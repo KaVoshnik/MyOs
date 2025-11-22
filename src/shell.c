@@ -93,6 +93,7 @@ static const char *shell_extract_token(const char *input, char *buffer, size_t b
 }
 
 static void shell_print_fs_error(fs_status_t status) {
+    terminal_write("\x1B[31m");  /* Red color */
     switch (status) {
         case FS_ERR_NOENT:
             terminal_write_line("Filesystem error: path not found.");
@@ -119,6 +120,7 @@ static void shell_print_fs_error(fs_status_t status) {
             terminal_write_line("Filesystem error: unknown.");
             break;
     }
+    terminal_write("\x1B[0m");  /* Reset color */
 }
 
 static void shell_print_prompt(void) {
@@ -162,6 +164,7 @@ static void shell_cmd_help(void) {
     terminal_write_line("  tail [FILE] [LINES] - show last lines of file");
     terminal_write_line("  wc FILE - count lines, words, characters");
     terminal_write_line("  hexdump FILE - show file in hexadecimal");
+    terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
     terminal_write_line("");
@@ -269,12 +272,15 @@ static void shell_cmd_pwd(void) {
 static void shell_ls_callback(const fs_dir_entry_t *entry, void *user_data) {
     (void)user_data;
     if (entry->is_directory) {
-        terminal_write("[DIR] ");
+        terminal_write("\x1B[34m[DIR]\x1B[0m ");  /* Blue for directories */
+        terminal_write("\x1B[1;34m");  /* Bold blue */
+        terminal_write(entry->name);
+        terminal_write("\x1B[0m");
     } else {
         terminal_write("      ");
-    }
-    terminal_write(entry->name);
-    if (!entry->is_directory) {
+        terminal_write("\x1B[32m");  /* Green for files */
+        terminal_write(entry->name);
+        terminal_write("\x1B[0m");
         terminal_write("  ");
         print_uint64(entry->size);
         terminal_write(" bytes");
@@ -368,12 +374,16 @@ static void shell_cmd_rm(const char *args) {
 
 static void shell_cmd_savefs(void) {
     if (!fs_persistence_available()) {
+        terminal_write("\x1B[33m");  /* Yellow warning */
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_save();
     if (status == FS_OK) {
+        terminal_write("\x1B[32m");  /* Green success */
         terminal_write_line("Filesystem snapshot saved to disk.");
+        terminal_write("\x1B[0m");
     } else {
         shell_print_fs_error(status);
     }
@@ -381,12 +391,16 @@ static void shell_cmd_savefs(void) {
 
 static void shell_cmd_loadfs(void) {
     if (!fs_persistence_available()) {
+        terminal_write("\x1B[33m");  /* Yellow warning */
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_load();
     if (status == FS_OK) {
+        terminal_write("\x1B[32m");  /* Green success */
         terminal_write_line("Filesystem reloaded from disk.");
+        terminal_write("\x1B[0m");
     } else {
         shell_print_fs_error(status);
     }
@@ -406,16 +420,18 @@ static void shell_cmd_diskinfo(void) {
     uint64_t total_mb = total_bytes / (1024 * 1024);
     uint64_t total_gb = total_bytes / (1024 * 1024 * 1024);
     
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
     terminal_write_line("ATA Disk Information:");
-    terminal_write("  Model:    ");
+    terminal_write("\x1B[0m");
+    terminal_write("  Model:    \x1B[33m");  /* Yellow */
     terminal_write_line(model && model[0] ? model : "(unknown)");
-    terminal_write("  Serial:   ");
+    terminal_write("\x1B[0m  Serial:   \x1B[33m");
     terminal_write_line(serial && serial[0] ? serial : "(unknown)");
-    terminal_write("  Firmware: ");
+    terminal_write("\x1B[0m  Firmware: \x1B[33m");
     terminal_write_line(firmware && firmware[0] ? firmware : "(unknown)");
-    terminal_write("  Capacity: ");
+    terminal_write("\x1B[0m  Capacity: \x1B[32m");  /* Green */
     print_uint64(total_sectors);
-    terminal_write(" sectors (");
+    terminal_write("\x1B[0m sectors (");
     if (total_gb > 0) {
         print_uint64(total_gb);
         terminal_write(" GB / ");
@@ -664,9 +680,30 @@ static void shell_cmd_grep(const char *args) {
                 line[copy_len] = '\0';
                 
                 if (strstr(line, pattern) != NULL) {
+                    terminal_write("\x1B[36m");  /* Cyan for filename */
                     terminal_write(file_path);
-                    terminal_write(": ");
-                    terminal_write_line(line);
+                    terminal_write("\x1B[0m: ");
+                    /* Highlight the pattern in the line */
+                    const char *match = strstr(line, pattern);
+                    if (match) {
+                        size_t before_len = match - line;
+                        if (before_len < sizeof(line)) {
+                            char before[256];
+                            size_t copy_len = (before_len < sizeof(before) - 1) ? before_len : sizeof(before) - 1;
+                            memcpy(before, line, copy_len);
+                            before[copy_len] = '\0';
+                            terminal_write(before);
+                            terminal_write("\x1B[1;31m");  /* Bold red for match */
+                            terminal_write(pattern);
+                            terminal_write("\x1B[0m");
+                            terminal_write(match + strlen(pattern));
+                        } else {
+                            terminal_write(line);
+                        }
+                    } else {
+                        terminal_write(line);
+                    }
+                    terminal_write_line("");
                     found_any = 1;
                 }
             }
@@ -861,9 +898,54 @@ static void shell_cmd_wc(const char *args) {
     terminal_write_line(path);
 }
 
+static void shell_cmd_ansi_test(void) {
+    terminal_write_line("\x1B[1mANSI Escape Sequences Test\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[31mRed text\x1B[0m");
+    terminal_write_line("\x1B[32mGreen text\x1B[0m");
+    terminal_write_line("\x1B[33mYellow text\x1B[0m");
+    terminal_write_line("\x1B[34mBlue text\x1B[0m");
+    terminal_write_line("\x1B[35mMagenta text\x1B[0m");
+    terminal_write_line("\x1B[36mCyan text\x1B[0m");
+    terminal_write_line("\x1B[37mWhite text\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[1;31mBold red\x1B[0m");
+    terminal_write_line("\x1B[1;32mBold green\x1B[0m");
+    terminal_write_line("\x1B[1;33mBold yellow\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[90mBright black\x1B[0m");
+    terminal_write_line("\x1B[91mBright red\x1B[0m");
+    terminal_write_line("\x1B[92mBright green\x1B[0m");
+    terminal_write_line("\x1B[93mBright yellow\x1B[0m");
+    terminal_write_line("\x1B[94mBright blue\x1B[0m");
+    terminal_write_line("\x1B[95mBright magenta\x1B[0m");
+    terminal_write_line("\x1B[96mBright cyan\x1B[0m");
+    terminal_write_line("\x1B[97mBright white\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[41mRed background\x1B[0m");
+    terminal_write_line("\x1B[42mGreen background\x1B[0m");
+    terminal_write_line("\x1B[43mYellow background\x1B[0m");
+    terminal_write_line("\x1B[44mBlue background\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[7mInverted colors\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write("Cursor movement test: ");
+    terminal_write("\x1B[5C");  /* Move right 5 positions */
+    terminal_write_line("<- moved here");
+    
+    terminal_write_line("\x1B[2K");  /* Clear line */
+    terminal_write_line("Line cleared above");
+}
+
 static void shell_cmd_hexdump(const char *args) {
     char file_path[FS_MAX_PATH_LEN];
-    const char *rest = shell_extract_token(args, file_path, sizeof(file_path));
+    shell_extract_token(args, file_path, sizeof(file_path));
     
     if (file_path[0] == '\0') {
         terminal_write_line("Usage: hexdump FILE");
@@ -892,8 +974,8 @@ static void shell_cmd_hexdump(const char *args) {
     size_t bytes_per_line = 16;
     
     while (offset < size) {
-        /* Print offset */
-        terminal_write("0000");
+        /* Print offset in cyan */
+        terminal_write("\x1B[36m0000");
         uint64_t off = offset;
         char offset_str[9];
         for (int i = 7; i >= 0; --i) {
@@ -902,14 +984,21 @@ static void shell_cmd_hexdump(const char *args) {
         }
         offset_str[8] = '\0';
         terminal_write(offset_str);
-        terminal_write("  ");
+        terminal_write("\x1B[0m  ");
         
         /* Print hex bytes */
         for (size_t i = 0; i < bytes_per_line; ++i) {
             if (offset + i < size) {
                 uint8_t byte = data[offset + i];
+                /* Color code: printable = green, non-printable = red */
+                if (byte >= 32 && byte < 127) {
+                    terminal_write("\x1B[32m");
+                } else {
+                    terminal_write("\x1B[31m");
+                }
                 terminal_putc(hex_digits[(byte >> 4) & 0xF]);
                 terminal_putc(hex_digits[byte & 0xF]);
+                terminal_write("\x1B[0m");
             } else {
                 terminal_write("  ");
             }
@@ -920,19 +1009,24 @@ static void shell_cmd_hexdump(const char *args) {
             }
         }
         
-        terminal_write(" |");
+        terminal_write(" \x1B[33m|\x1B[0m");  /* Yellow separator */
         
         /* Print ASCII representation */
         for (size_t i = 0; i < bytes_per_line && offset + i < size; ++i) {
             uint8_t byte = data[offset + i];
             if (byte >= 32 && byte < 127) {
+                terminal_write("\x1B[32m");  /* Green for printable */
                 terminal_putc((char)byte);
+                terminal_write("\x1B[0m");
             } else {
+                terminal_write("\x1B[31m");  /* Red for non-printable */
                 terminal_putc('.');
+                terminal_write("\x1B[0m");
             }
         }
         
-        terminal_write_line("|");
+        terminal_write("\x1B[33m|\x1B[0m");  /* Yellow separator */
+        terminal_write_line("");
         offset += bytes_per_line;
     }
 }
@@ -1040,7 +1134,8 @@ static void shell_cmd_testmem(void) {
     /* Test 1: Simple allocation */
     void *ptr1 = kmalloc(100);
     if (ptr1 == NULL) {
-        terminal_write_line("ERROR: kmalloc(100) failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: kmalloc(100) failed!");
+        terminal_write_line("");
         return;
     }
     terminal_write_line("Test 1: Allocated 100 bytes - OK");
@@ -1054,7 +1149,8 @@ static void shell_cmd_testmem(void) {
     void *ptr2 = kmalloc(200);
     void *ptr3 = kmalloc(50);
     if (ptr2 == NULL || ptr3 == NULL) {
-        terminal_write_line("ERROR: Multiple allocations failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Multiple allocations failed!");
+        terminal_write_line("");
         kfree(ptr1);
         if (ptr2) kfree(ptr2);
         return;
@@ -1073,13 +1169,15 @@ static void shell_cmd_testmem(void) {
     /* Test 4: Aligned allocation */
     void *ptr4 = kmalloc_aligned(64, 16);
     if (ptr4 == NULL) {
-        terminal_write_line("ERROR: Aligned allocation failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Aligned allocation failed!");
+        terminal_write_line("");
         kfree(ptr1);
         kfree(ptr3);
         return;
     }
     if (((uintptr_t)ptr4 & 0xF) != 0) {
-        terminal_write_line("ERROR: Alignment incorrect!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Alignment incorrect!");
+        terminal_write_line("");
         kfree(ptr1);
         kfree(ptr3);
         kfree(ptr4);
@@ -1271,6 +1369,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "ansi")) != NULL) {
+        (void)args;
+        shell_cmd_ansi_test();
+        return;
+    }
+
     if ((args = shell_match_command(line, "poweroff")) != NULL) {
         (void)args;
         shell_cmd_poweroff();
@@ -1291,7 +1395,7 @@ static void shell_execute(const char *line) {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
-    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump",
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "ansi",
     "poweroff", "reboot", NULL
 };
 
@@ -1400,9 +1504,11 @@ static int shell_maybe_autosave(void) {
     shell_last_autosave_seconds = now;
     fs_status_t status = fs_save();
     if (status == FS_OK) {
-        terminal_write_line("[autosave] Filesystem snapshot saved.");
+        terminal_write("\x1B[36m[autosave]\x1B[0m ");  /* Cyan for autosave */
+        terminal_write("\x1B[32mFilesystem snapshot saved.\x1B[0m");
+        terminal_write_line("");
     } else {
-        terminal_write("[autosave] ");
+        terminal_write("\x1B[36m[autosave]\x1B[0m ");
         shell_print_fs_error(status);
     }
     return 1;
