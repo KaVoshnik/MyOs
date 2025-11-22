@@ -20,6 +20,12 @@ void kernel_main(void) {
     memory_init(heap_start, 0x100000); /* 1 MiB heap */
     terminal_write_line("[kernel] Heap initialized.");
 
+    interrupts_disable();
+    interrupts_init();
+    pit_init(100);
+    keyboard_init();
+    interrupts_enable();
+
     ata_init();
     if (ata_is_available()) {
         terminal_write_line("[kernel] ATA initialized.");
@@ -29,12 +35,6 @@ void kernel_main(void) {
 
     fs_init();
     terminal_write_line("[kernel] Filesystem ready.");
-
-    interrupts_disable();
-    interrupts_init();
-    pit_init(100);
-    keyboard_init();
-    interrupts_enable();
 
     terminal_write_line("[kernel] Initialization complete.");
     shell_run();

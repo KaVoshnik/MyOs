@@ -6,6 +6,7 @@
 #include <memory.h>
 #include <filesystem.h>
 #include <system.h>
+#include <ata.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -152,6 +153,7 @@ static void shell_cmd_help(void) {
     terminal_write_line("  rm [-r] PATH - remove file or directory");
     terminal_write_line("  savefs     - persist filesystem to disk");
     terminal_write_line("  loadfs     - reload filesystem from disk");
+    terminal_write_line("  diskinfo   - show ATA disk information");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
     terminal_write_line("");
@@ -355,6 +357,38 @@ static void shell_cmd_loadfs(void) {
     } else {
         shell_print_fs_error(status);
     }
+}
+
+static void shell_cmd_diskinfo(void) {
+    if (!ata_is_available()) {
+        terminal_write_line("ATA disk not available.");
+        return;
+    }
+    
+    const char *model = ata_get_model();
+    const char *serial = ata_get_serial();
+    const char *firmware = ata_get_firmware();
+    uint64_t total_sectors = ata_get_total_sectors();
+    uint64_t total_bytes = total_sectors * 512;
+    uint64_t total_mb = total_bytes / (1024 * 1024);
+    uint64_t total_gb = total_bytes / (1024 * 1024 * 1024);
+    
+    terminal_write_line("ATA Disk Information:");
+    terminal_write("  Model:    ");
+    terminal_write_line(model && model[0] ? model : "(unknown)");
+    terminal_write("  Serial:   ");
+    terminal_write_line(serial && serial[0] ? serial : "(unknown)");
+    terminal_write("  Firmware: ");
+    terminal_write_line(firmware && firmware[0] ? firmware : "(unknown)");
+    terminal_write("  Capacity: ");
+    print_uint64(total_sectors);
+    terminal_write(" sectors (");
+    if (total_gb > 0) {
+        print_uint64(total_gb);
+        terminal_write(" GB / ");
+    }
+    print_uint64(total_mb);
+    terminal_write_line(" MB)");
 }
 
 static void shell_cmd_poweroff(void) {
@@ -645,6 +679,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "diskinfo")) != NULL) {
+        (void)args;
+        shell_cmd_diskinfo();
+        return;
+    }
+
     if ((args = shell_match_command(line, "poweroff")) != NULL) {
         (void)args;
         shell_cmd_poweroff();
@@ -664,7 +704,7 @@ static void shell_execute(const char *line) {
 
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
-    "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs",
+    "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "poweroff", "reboot", NULL
 };
 
