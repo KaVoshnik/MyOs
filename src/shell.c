@@ -863,7 +863,7 @@ static void shell_cmd_wc(const char *args) {
 
 static void shell_cmd_hexdump(const char *args) {
     char file_path[FS_MAX_PATH_LEN];
-    const char *rest = shell_extract_token(args, file_path, sizeof(file_path));
+    shell_extract_token(args, file_path, sizeof(file_path));
     
     if (file_path[0] == '\0') {
         terminal_write_line("Usage: hexdump FILE");
