@@ -189,3 +189,133 @@ size_t memory_bytes_used(void) {
 size_t memory_heap_size(void) {
     return heap_size;
 }
+
+void *calloc(size_t num, size_t size) {
+    if (num == 0 || size == 0) {
+        return NULL;
+    }
+    
+    /* Check for overflow */
+    size_t total = num * size;
+    if (total / num != size) {
+        return NULL; /* Overflow */
+    }
+    
+    void *ptr = kmalloc(total);
+    if (ptr) {
+        memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void *realloc(void *ptr, size_t new_size) {
+    if (new_size == 0) {
+        kfree(ptr);
+        return NULL;
+    }
+    
+    if (ptr == NULL) {
+        return kmalloc(new_size);
+    }
+    
+    /* Get the original block */
+    block_header_t *block = NULL;
+    block_header_t *regular_block = (block_header_t *)((uintptr_t)ptr - sizeof(block_header_t));
+    
+    if (regular_block >= heap_start && 
+        (uintptr_t)regular_block < (uintptr_t)heap_start + heap_size &&
+        (uintptr_t)ptr == (uintptr_t)regular_block + sizeof(block_header_t) &&
+        !regular_block->free &&
+        (uintptr_t)ptr < (uintptr_t)regular_block + sizeof(block_header_t) + regular_block->size) {
+        block = regular_block;
+    } else {
+        if ((uintptr_t)ptr >= sizeof(uintptr_t)) {
+            uintptr_t stored_ptr = *((uintptr_t *)((uintptr_t)ptr - sizeof(uintptr_t)));
+            block_header_t *aligned_block = (block_header_t *)stored_ptr;
+            
+            if (aligned_block >= heap_start && 
+                (uintptr_t)aligned_block < (uintptr_t)heap_start + heap_size &&
+                (uintptr_t)ptr >= (uintptr_t)aligned_block + sizeof(block_header_t) &&
+                (uintptr_t)ptr < (uintptr_t)aligned_block + sizeof(block_header_t) + aligned_block->size &&
+                !aligned_block->free) {
+                block = aligned_block;
+            }
+        }
+    }
+    
+    if (block == NULL) {
+        return NULL; /* Invalid pointer */
+    }
+    
+    size_t old_size = block->size;
+    size_t aligned_new_size = align_size(new_size);
+    if (aligned_new_size < MIN_BLOCK_SIZE) {
+        aligned_new_size = MIN_BLOCK_SIZE;
+    }
+    
+    /* If new size is smaller or equal, just return the same pointer */
+    if (aligned_new_size <= old_size) {
+        return ptr;
+    }
+    
+    /* Try to expand in place if next block is free and large enough */
+    if (block->next && block->next->free) {
+        size_t available = block->next->size + sizeof(block_header_t);
+        if (old_size + available >= aligned_new_size) {
+            block_header_t *next = block->next;
+            block->size = old_size + sizeof(block_header_t) + next->size;
+            block->next = next->next;
+            if (block->next) {
+                block->next->prev = block;
+            }
+            split_block(block, aligned_new_size);
+            return ptr;
+        }
+    }
+    
+    /* Need to allocate new block and copy */
+    void *new_ptr = kmalloc(new_size);
+    if (new_ptr == NULL) {
+        return NULL;
+    }
+    
+    size_t copy_size = (old_size < new_size) ? old_size : new_size;
+    memcpy(new_ptr, ptr, copy_size);
+    kfree(ptr);
+    
+    return new_ptr;
+}
+
+size_t memory_blocks_count(void) {
+    size_t count = 0;
+    block_header_t *current = heap_start;
+    while (current) {
+        ++count;
+        current = current->next;
+    }
+    return count;
+}
+
+size_t memory_free_blocks_count(void) {
+    size_t count = 0;
+    block_header_t *current = heap_start;
+    while (current) {
+        if (current->free) {
+            ++count;
+        }
+        current = current->next;
+    }
+    return count;
+}
+
+size_t memory_largest_free_block(void) {
+    size_t largest = 0;
+    block_header_t *current = heap_start;
+    while (current) {
+        if (current->free && current->size > largest) {
+            largest = current->size;
+        }
+        current = current->next;
+    }
+    return largest;
+}
