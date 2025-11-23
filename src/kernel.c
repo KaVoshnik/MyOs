@@ -25,7 +25,26 @@ void kernel_main(void) {
     interrupts_init();
     pit_init(100);
     keyboard_init();
+    
+    /* Clear any pending PS/2 data before initializing mouse */
+    while ((inb(0x64) & 0x01) != 0) {
+        inb(0x60); /* Discard any pending data */
+    }
+    
     mouse_init();
+    
+    /* Clear any data that mouse init might have generated */
+    while ((inb(0x64) & 0x01) != 0) {
+        uint8_t status = inb(0x64);
+        if (status & 0x20) {
+            /* Mouse data - discard */
+            inb(0x60);
+        } else {
+            /* Keyboard data - might be important, but clear to be safe */
+            inb(0x60);
+        }
+    }
+    
     interrupts_enable();
 
     ata_init();

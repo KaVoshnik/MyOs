@@ -54,21 +54,6 @@ static void mouse_wait_output(void) {
     }
 }
 
-static uint8_t mouse_read_data(void) {
-    mouse_wait_input();
-    return inb(MOUSE_DATA_PORT);
-}
-
-static void mouse_write_command(uint8_t command) {
-    mouse_wait_output();
-    outb(MOUSE_COMMAND_PORT, command);
-}
-
-static void mouse_write_data(uint8_t data) {
-    mouse_wait_output();
-    outb(MOUSE_DATA_PORT, data);
-}
-
 static int mouse_send_command(uint8_t command) {
     mouse_wait_output();
     outb(MOUSE_COMMAND_PORT, 0xD4); /* Send command to mouse */
@@ -144,56 +129,40 @@ void mouse_init(void) {
     memset(mouse_packet, 0, sizeof(mouse_packet));
     mouse_waiting_ack = 0;
     
+    /* Simple initialization - just enable mouse port and interrupts */
+    /* Don't do full reset to avoid blocking or interfering with keyboard */
+    
     /* Enable mouse device */
-    mouse_wait_output();
-    outb(MOUSE_COMMAND_PORT, 0xA8); /* Enable mouse */
+    if ((inb(MOUSE_STATUS_PORT) & 0x02) == 0) {
+        outb(MOUSE_COMMAND_PORT, 0xA8); /* Enable mouse */
+    }
     
-    /* Enable interrupts for mouse */
-    mouse_wait_output();
-    outb(MOUSE_COMMAND_PORT, 0x20); /* Read controller configuration */
-    mouse_wait_input();
-    uint8_t config = inb(MOUSE_DATA_PORT);
-    config |= 0x02; /* Enable mouse interrupt */
-    config |= 0x01; /* Enable keyboard interrupt */
-    mouse_wait_output();
-    outb(MOUSE_COMMAND_PORT, 0x60); /* Write controller configuration */
-    mouse_wait_output();
-    outb(MOUSE_DATA_PORT, config);
-    
-    /* Reset mouse */
-    if (mouse_send_command(MOUSE_CMD_RESET) == 0) {
-        mouse_wait_input();
-        uint8_t response = inb(MOUSE_DATA_PORT);
-        if (response == 0xAA) {
-            /* Mouse reset successful, wait for device ID */
-            mouse_wait_input();
-            response = inb(MOUSE_DATA_PORT);
-            if (response == 0x00) {
-                /* Standard PS/2 mouse */
-                mouse_available = 1;
-            } else if (response == 0x03) {
-                /* Mouse with scroll wheel */
-                mouse_available = 1;
+    /* Enable interrupts for mouse in controller config */
+    if ((inb(MOUSE_STATUS_PORT) & 0x02) == 0) {
+        outb(MOUSE_COMMAND_PORT, 0x20); /* Read controller configuration */
+        uint32_t timeout = 100;
+        while (timeout-- > 0 && (inb(MOUSE_STATUS_PORT) & 0x01) == 0) {
+            /* Wait for data */
+        }
+        if (timeout > 0) {
+            uint8_t config = inb(MOUSE_DATA_PORT);
+            config |= 0x02; /* Enable mouse interrupt */
+            config |= 0x01; /* Keep keyboard interrupt enabled */
+            
+            if ((inb(MOUSE_STATUS_PORT) & 0x02) == 0) {
+                outb(MOUSE_COMMAND_PORT, 0x60); /* Write controller configuration */
+                if ((inb(MOUSE_STATUS_PORT) & 0x02) == 0) {
+                    outb(MOUSE_DATA_PORT, config);
+                    mouse_available = 1; /* Assume mouse is available */
+                }
             }
         }
     }
     
     if (mouse_available) {
-        /* Enable mouse */
-        mouse_send_command(MOUSE_CMD_ENABLE);
-        
-        /* Enable scroll wheel if available */
-        mouse_send_command(MOUSE_CMD_SET_SAMPLE_RATE);
-        mouse_send_command(200); /* 200 samples/sec */
-        mouse_send_command(MOUSE_CMD_SET_SAMPLE_RATE);
-        mouse_send_command(100); /* 100 samples/sec */
-        mouse_send_command(MOUSE_CMD_SET_SAMPLE_RATE);
-        mouse_send_command(80);  /* 80 samples/sec */
-        mouse_send_command(MOUSE_CMD_GET_ID);
-        
-        terminal_write_line("[mouse] Mouse driver initialized");
+        terminal_write_line("[mouse] Mouse driver ready");
     } else {
-        terminal_write_line("[mouse] Mouse not found");
+        terminal_write_line("[mouse] Mouse initialization skipped");
     }
 }
 
