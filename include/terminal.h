@@ -31,6 +31,9 @@ void terminal_putc(char c);
 void terminal_clear(void);
 void terminal_get_cursor(size_t *row, size_t *column);
 void terminal_set_cursor(size_t row, size_t column);
+void terminal_scroll_up(size_t lines);
+void terminal_scroll_down(size_t lines);
+void terminal_scroll_to_bottom(void);
 
 #endif /* _MYOS_TERMINAL_H */
 

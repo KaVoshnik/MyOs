@@ -6,6 +6,7 @@
 #include <shell.h>
 #include <filesystem.h>
 #include <ata.h>
+#include <mouse.h>
 
 extern uint8_t _kernel_end;
 
@@ -24,6 +25,7 @@ void kernel_main(void) {
     interrupts_init();
     pit_init(100);
     keyboard_init();
+    mouse_init();
     interrupts_enable();
 
     ata_init();

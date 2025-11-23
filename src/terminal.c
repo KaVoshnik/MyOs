@@ -2,10 +2,13 @@
 #include <string.h>
 #include <io.h>
 #include <stdint.h>
+#include <memory.h>
 
 static volatile uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
 static const size_t VGA_WIDTH = 80;
 static const size_t VGA_HEIGHT = 25;
+
+#define TERMINAL_SCROLLBACK_SIZE 1000  /* Store 1000 lines of history */
 
 static size_t terminal_row = 0;
 static size_t terminal_column = 0;
@@ -13,6 +16,13 @@ static uint8_t terminal_color = (TERMINAL_COLOR_LIGHT_GREY | (TERMINAL_COLOR_BLA
 static uint8_t terminal_default_color = (TERMINAL_COLOR_LIGHT_GREY | (TERMINAL_COLOR_BLACK << 4));
 static int terminal_bold = 0;
 static int terminal_cursor_visible = 1;
+
+/* Scrollback buffer */
+static uint16_t *terminal_scrollback_buffer = NULL;
+static size_t terminal_scrollback_count = 0;
+static size_t terminal_scrollback_head = 0;
+static size_t terminal_scroll_offset = 0;  /* 0 = bottom (most recent), higher = older */
+static int terminal_in_scroll_mode = 0;
 
 static inline uint8_t make_color(enum terminal_color fg, enum terminal_color bg) {
     return (uint8_t)(fg | (bg << 4));
@@ -30,7 +40,35 @@ static void terminal_update_cursor(void) {
     outb(0x3D5, (uint8_t)((position >> 8) & 0xFF));
 }
 
+static void terminal_save_line_to_scrollback(size_t line_index) {
+    if (!terminal_scrollback_buffer) {
+        return;
+    }
+    
+    size_t buffer_index = (terminal_scrollback_head + terminal_scrollback_count) % TERMINAL_SCROLLBACK_SIZE;
+    
+    /* Save the line to scrollback */
+    for (size_t col = 0; col < VGA_WIDTH; ++col) {
+        terminal_scrollback_buffer[buffer_index * VGA_WIDTH + col] = VGA_MEMORY[line_index * VGA_WIDTH + col];
+    }
+    
+    if (terminal_scrollback_count < TERMINAL_SCROLLBACK_SIZE) {
+        terminal_scrollback_count++;
+    } else {
+        /* Buffer full, overwrite oldest */
+        terminal_scrollback_head = (terminal_scrollback_head + 1) % TERMINAL_SCROLLBACK_SIZE;
+    }
+}
+
 static void terminal_scroll(void) {
+    /* Save the top line before scrolling */
+    terminal_save_line_to_scrollback(0);
+    
+    /* Reset scroll offset when new content is added */
+    if (!terminal_in_scroll_mode) {
+        terminal_scroll_offset = 0;
+    }
+    
     for (size_t row = 1; row < VGA_HEIGHT; ++row) {
         for (size_t col = 0; col < VGA_WIDTH; ++col) {
             VGA_MEMORY[(row - 1) * VGA_WIDTH + col] = VGA_MEMORY[row * VGA_WIDTH + col];
@@ -46,6 +84,86 @@ static void terminal_scroll(void) {
     terminal_update_cursor();
 }
 
+static void terminal_render_from_scrollback(void) {
+    if (!terminal_scrollback_buffer || terminal_scrollback_count == 0) {
+        return;
+    }
+    
+    /* Calculate which lines to show from scrollback */
+    size_t lines_to_show = (terminal_scrollback_count < VGA_HEIGHT) ? terminal_scrollback_count : VGA_HEIGHT;
+    size_t start_offset = 0;
+    
+    if (terminal_scrollback_count > VGA_HEIGHT) {
+        /* We have more history than screen can show */
+        size_t max_offset = terminal_scrollback_count - VGA_HEIGHT;
+        if (terminal_scroll_offset > max_offset) {
+            terminal_scroll_offset = max_offset;
+        }
+        start_offset = terminal_scroll_offset;
+    }
+    
+    /* Render lines from scrollback */
+    for (size_t row = 0; row < lines_to_show; ++row) {
+        size_t buffer_index = (terminal_scrollback_head + start_offset + row) % TERMINAL_SCROLLBACK_SIZE;
+        for (size_t col = 0; col < VGA_WIDTH; ++col) {
+            VGA_MEMORY[row * VGA_WIDTH + col] = terminal_scrollback_buffer[buffer_index * VGA_WIDTH + col];
+        }
+    }
+    
+    /* Fill remaining lines with blanks */
+    for (size_t row = lines_to_show; row < VGA_HEIGHT; ++row) {
+        for (size_t col = 0; col < VGA_WIDTH; ++col) {
+            VGA_MEMORY[row * VGA_WIDTH + col] = make_vga_entry(' ', terminal_color);
+        }
+    }
+}
+
+void terminal_scroll_up(size_t lines) {
+    if (!terminal_scrollback_buffer || terminal_scrollback_count == 0) {
+        return;
+    }
+    
+    terminal_in_scroll_mode = 1;
+    size_t max_offset = 0;
+    if (terminal_scrollback_count > VGA_HEIGHT) {
+        max_offset = terminal_scrollback_count - VGA_HEIGHT;
+    }
+    
+    if (terminal_scroll_offset + lines <= max_offset) {
+        terminal_scroll_offset += lines;
+    } else {
+        terminal_scroll_offset = max_offset;
+    }
+    
+    terminal_render_from_scrollback();
+    terminal_update_cursor();
+}
+
+void terminal_scroll_down(size_t lines) {
+    if (!terminal_scrollback_buffer) {
+        return;
+    }
+    
+    if (terminal_scroll_offset >= lines) {
+        terminal_scroll_offset -= lines;
+    } else {
+        terminal_scroll_offset = 0;
+        terminal_in_scroll_mode = 0;
+        /* Show current screen content */
+        terminal_update_cursor();
+        return;
+    }
+    
+    terminal_render_from_scrollback();
+    terminal_update_cursor();
+}
+
+void terminal_scroll_to_bottom(void) {
+    terminal_scroll_offset = 0;
+    terminal_in_scroll_mode = 0;
+    terminal_update_cursor();
+}
+
 void terminal_initialize(void) {
     terminal_row = 0;
     terminal_column = 0;
@@ -53,6 +171,17 @@ void terminal_initialize(void) {
     terminal_default_color = terminal_color;
     terminal_bold = 0;
     terminal_cursor_visible = 1;
+    
+    /* Initialize scrollback buffer */
+    terminal_scrollback_buffer = (uint16_t *)kmalloc(TERMINAL_SCROLLBACK_SIZE * VGA_WIDTH * sizeof(uint16_t));
+    terminal_scrollback_count = 0;
+    terminal_scrollback_head = 0;
+    terminal_scroll_offset = 0;
+    terminal_in_scroll_mode = 0;
+    
+    if (terminal_scrollback_buffer) {
+        memset(terminal_scrollback_buffer, 0, TERMINAL_SCROLLBACK_SIZE * VGA_WIDTH * sizeof(uint16_t));
+    }
 
     for (size_t row = 0; row < VGA_HEIGHT; ++row) {
         for (size_t col = 0; col < VGA_WIDTH; ++col) {
@@ -85,6 +214,12 @@ static void terminal_newline(void) {
         terminal_scroll();
         return;
     }
+    
+    /* If we're in scroll mode, exit it when new content is added */
+    if (terminal_in_scroll_mode) {
+        terminal_scroll_to_bottom();
+    }
+    
     terminal_update_cursor();
 }
 
@@ -403,6 +538,11 @@ static int terminal_parse_ansi_sequence(const char **data_ptr) {
 }
 
 void terminal_putc(char c) {
+    /* If we're in scroll mode and user types, return to bottom */
+    if (terminal_in_scroll_mode && c != '\b') {
+        terminal_scroll_to_bottom();
+    }
+    
     if (c == '\n') {
         terminal_newline();
         return;
