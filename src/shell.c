@@ -7,6 +7,7 @@
 #include <filesystem.h>
 #include <system.h>
 #include <ata.h>
+#include <mouse.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -93,6 +94,7 @@ static const char *shell_extract_token(const char *input, char *buffer, size_t b
 }
 
 static void shell_print_fs_error(fs_status_t status) {
+    terminal_write("\x1B[31m");  /* Red color */
     switch (status) {
         case FS_ERR_NOENT:
             terminal_write_line("Filesystem error: path not found.");
@@ -119,6 +121,7 @@ static void shell_print_fs_error(fs_status_t status) {
             terminal_write_line("Filesystem error: unknown.");
             break;
     }
+    terminal_write("\x1B[0m");  /* Reset color */
 }
 
 static void shell_print_prompt(void) {
@@ -154,6 +157,15 @@ static void shell_cmd_help(void) {
     terminal_write_line("  savefs     - persist filesystem to disk");
     terminal_write_line("  loadfs     - reload filesystem from disk");
     terminal_write_line("  diskinfo   - show ATA disk information");
+    terminal_write_line("  cp SRC DEST - copy file");
+    terminal_write_line("  mv SRC DEST - move/rename file");
+    terminal_write_line("  find [PATH] PATTERN - find files by name pattern");
+    terminal_write_line("  grep PATTERN FILE - search for pattern in file");
+    terminal_write_line("  head [FILE] [LINES] - show first lines of file");
+    terminal_write_line("  tail [FILE] [LINES] - show last lines of file");
+    terminal_write_line("  wc FILE - count lines, words, characters");
+    terminal_write_line("  hexdump FILE - show file in hexadecimal");
+    terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
     terminal_write_line("");
@@ -207,16 +219,41 @@ static void shell_cmd_mem(void) {
     size_t used = memory_bytes_used();
     size_t total = memory_heap_size();
     size_t free = (total > used) ? (total - used) : 0;
+    size_t blocks = memory_blocks_count();
+    size_t free_blocks = memory_free_blocks_count();
+    size_t largest_free = memory_largest_free_block();
     
-    terminal_write("Heap total: ");
+    terminal_write("Heap total:      ");
     print_uint64(total);
     terminal_write_line(" bytes");
-    terminal_write("Heap used:  ");
+    terminal_write("Heap used:       ");
     print_uint64(used);
     terminal_write_line(" bytes");
-    terminal_write("Heap free:  ");
+    terminal_write("Heap free:       ");
     print_uint64(free);
     terminal_write_line(" bytes");
+    terminal_write("Total blocks:    ");
+    print_uint64(blocks);
+    terminal_write_line("");
+    terminal_write("Free blocks:     ");
+    print_uint64(free_blocks);
+    terminal_write_line("");
+    terminal_write("Largest free:    ");
+    print_uint64(largest_free);
+    terminal_write_line(" bytes");
+    
+    if (blocks > 0) {
+        size_t used_blocks = blocks - free_blocks;
+        terminal_write("Fragmentation:   ");
+        if (free_blocks > 0 && used_blocks > 0) {
+            print_uint64(free_blocks);
+            terminal_write(" free blocks, ");
+            print_uint64(used_blocks);
+            terminal_write_line(" used blocks");
+        } else {
+            terminal_write_line("none");
+        }
+    }
 }
 
 static void shell_cmd_echo(const char *args) {
@@ -236,12 +273,15 @@ static void shell_cmd_pwd(void) {
 static void shell_ls_callback(const fs_dir_entry_t *entry, void *user_data) {
     (void)user_data;
     if (entry->is_directory) {
-        terminal_write("[DIR] ");
+        terminal_write("\x1B[34m[DIR]\x1B[0m ");  /* Blue for directories */
+        terminal_write("\x1B[1;34m");  /* Bold blue */
+        terminal_write(entry->name);
+        terminal_write("\x1B[0m");
     } else {
         terminal_write("      ");
-    }
-    terminal_write(entry->name);
-    if (!entry->is_directory) {
+        terminal_write("\x1B[32m");  /* Green for files */
+        terminal_write(entry->name);
+        terminal_write("\x1B[0m");
         terminal_write("  ");
         print_uint64(entry->size);
         terminal_write(" bytes");
@@ -335,12 +375,16 @@ static void shell_cmd_rm(const char *args) {
 
 static void shell_cmd_savefs(void) {
     if (!fs_persistence_available()) {
+        terminal_write("\x1B[33m");  /* Yellow warning */
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_save();
     if (status == FS_OK) {
+        terminal_write("\x1B[32m");  /* Green success */
         terminal_write_line("Filesystem snapshot saved to disk.");
+        terminal_write("\x1B[0m");
     } else {
         shell_print_fs_error(status);
     }
@@ -348,12 +392,16 @@ static void shell_cmd_savefs(void) {
 
 static void shell_cmd_loadfs(void) {
     if (!fs_persistence_available()) {
+        terminal_write("\x1B[33m");  /* Yellow warning */
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
+        terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_load();
     if (status == FS_OK) {
+        terminal_write("\x1B[32m");  /* Green success */
         terminal_write_line("Filesystem reloaded from disk.");
+        terminal_write("\x1B[0m");
     } else {
         shell_print_fs_error(status);
     }
@@ -373,22 +421,615 @@ static void shell_cmd_diskinfo(void) {
     uint64_t total_mb = total_bytes / (1024 * 1024);
     uint64_t total_gb = total_bytes / (1024 * 1024 * 1024);
     
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
     terminal_write_line("ATA Disk Information:");
-    terminal_write("  Model:    ");
+    terminal_write("\x1B[0m");
+    terminal_write("  Model:    \x1B[33m");  /* Yellow */
     terminal_write_line(model && model[0] ? model : "(unknown)");
-    terminal_write("  Serial:   ");
+    terminal_write("\x1B[0m  Serial:   \x1B[33m");
     terminal_write_line(serial && serial[0] ? serial : "(unknown)");
-    terminal_write("  Firmware: ");
+    terminal_write("\x1B[0m  Firmware: \x1B[33m");
     terminal_write_line(firmware && firmware[0] ? firmware : "(unknown)");
-    terminal_write("  Capacity: ");
+    terminal_write("\x1B[0m  Capacity: \x1B[32m");  /* Green */
     print_uint64(total_sectors);
-    terminal_write(" sectors (");
+    terminal_write("\x1B[0m sectors (");
     if (total_gb > 0) {
         print_uint64(total_gb);
         terminal_write(" GB / ");
     }
     print_uint64(total_mb);
     terminal_write_line(" MB)");
+}
+
+static void shell_cmd_cp(const char *args) {
+    char src[FS_MAX_PATH_LEN];
+    char dest[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, src, sizeof(src));
+    rest = shell_extract_token(rest, dest, sizeof(dest));
+    
+    if (src[0] == '\0' || dest[0] == '\0') {
+        terminal_write_line("Usage: cp SRC DEST");
+        return;
+    }
+    
+    if (!fs_exists(src)) {
+        terminal_write_line("cp: source file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(src)) {
+        terminal_write_line("cp: cannot copy directory (use -r for recursive copy).");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(src, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("cp: unable to read source file.");
+        return;
+    }
+    
+    fs_status_t status = fs_write_file(dest, data, size);
+    if (status != FS_OK) {
+        if (status == FS_ERR_NOENT) {
+            fs_status_t create_status = fs_create_file(dest);
+            if (create_status == FS_OK) {
+                status = fs_write_file(dest, data, size);
+            } else {
+                status = create_status;
+            }
+        }
+        if (status != FS_OK) {
+            shell_print_fs_error(status);
+        }
+    }
+}
+
+static void shell_cmd_mv(const char *args) {
+    char src[FS_MAX_PATH_LEN];
+    char dest[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, src, sizeof(src));
+    rest = shell_extract_token(rest, dest, sizeof(dest));
+    
+    if (src[0] == '\0' || dest[0] == '\0') {
+        terminal_write_line("Usage: mv SRC DEST");
+        return;
+    }
+    
+    if (!fs_exists(src)) {
+        terminal_write_line("mv: source not found.");
+        return;
+    }
+    
+    if (strcmp(src, dest) == 0) {
+        return; /* Same file, nothing to do */
+    }
+    
+    /* Copy first */
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(src, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("mv: unable to read source.");
+        return;
+    }
+    
+    fs_status_t status = fs_write_file(dest, data, size);
+    if (status != FS_OK) {
+        if (status == FS_ERR_NOENT) {
+            fs_status_t create_status = fs_create_file(dest);
+            if (create_status == FS_OK) {
+                status = fs_write_file(dest, data, size);
+            } else {
+                status = create_status;
+            }
+        }
+        if (status != FS_OK) {
+            shell_print_fs_error(status);
+            return;
+        }
+    }
+    
+    /* Then remove source */
+    status = fs_remove(src, 0);
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+    }
+}
+
+typedef struct {
+    const char *pattern;
+    const char *base_path;
+    int *found_count;
+} shell_find_data_t;
+
+static void shell_find_callback(const fs_dir_entry_t *entry, void *user_data) {
+    shell_find_data_t *data = (shell_find_data_t *)user_data;
+    char full_path[FS_MAX_PATH_LEN];
+    
+    if (strcmp(data->base_path, "/") == 0) {
+        strcpy(full_path, "/");
+        strcat(full_path, entry->name);
+    } else {
+        strcpy(full_path, data->base_path);
+        if (full_path[strlen(full_path) - 1] != '/') {
+            strcat(full_path, "/");
+        }
+        strcat(full_path, entry->name);
+    }
+    
+    if (strstr(entry->name, data->pattern) != NULL) {
+        terminal_write_line(full_path);
+        (*data->found_count)++;
+    }
+    
+    if (entry->is_directory && strcmp(entry->name, ".") != 0 && strcmp(entry->name, "..") != 0) {
+        shell_find_data_t sub_data = {
+            .pattern = data->pattern,
+            .base_path = full_path,
+            .found_count = data->found_count
+        };
+        fs_list_dir(full_path, shell_find_callback, &sub_data);
+    }
+}
+
+static void shell_cmd_find(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    char pattern[FS_MAX_NAME_LEN];
+    
+    if (!path || *path == '\0') {
+        terminal_write_line("Usage: find [PATH] PATTERN");
+        return;
+    }
+    
+    /* Extract pattern (last token) */
+    const char *last_space = path;
+    const char *cursor = path;
+    while (*cursor) {
+        if (*cursor == ' ') {
+            last_space = cursor;
+        }
+        ++cursor;
+    }
+    
+    if (last_space == path) {
+        /* No path specified, use current directory */
+        path = ".";
+        shell_extract_token(args, pattern, sizeof(pattern));
+    } else {
+        shell_extract_token(last_space, pattern, sizeof(pattern));
+        char path_buf[FS_MAX_PATH_LEN];
+        size_t path_len = last_space - path;
+        if (path_len >= sizeof(path_buf)) {
+            path_len = sizeof(path_buf) - 1;
+        }
+        memcpy(path_buf, path, path_len);
+        path_buf[path_len] = '\0';
+        path = path_buf;
+    }
+    
+    if (pattern[0] == '\0') {
+        terminal_write_line("Usage: find [PATH] PATTERN");
+        return;
+    }
+    
+    int found_count = 0;
+    char search_path[FS_MAX_PATH_LEN];
+    
+    if (strcmp(path, ".") == 0) {
+        fs_get_cwd(search_path, sizeof(search_path));
+    } else {
+        strcpy(search_path, path);
+    }
+    
+    shell_find_data_t find_data = {
+        .pattern = pattern,
+        .base_path = search_path,
+        .found_count = &found_count
+    };
+    
+    fs_list_dir(search_path, shell_find_callback, &find_data);
+    
+    if (found_count == 0) {
+        terminal_write_line("No matches found.");
+    }
+}
+
+static void shell_cmd_grep(const char *args) {
+    char pattern[FS_MAX_PATH_LEN];
+    char file_path[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, pattern, sizeof(pattern));
+    rest = shell_extract_token(rest, file_path, sizeof(file_path));
+    
+    if (pattern[0] == '\0' || file_path[0] == '\0') {
+        terminal_write_line("Usage: grep PATTERN FILE");
+        return;
+    }
+    
+    if (!fs_exists(file_path)) {
+        terminal_write_line("grep: file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(file_path)) {
+        terminal_write_line("grep: cannot search in directory.");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(file_path, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("grep: unable to read file.");
+        return;
+    }
+    
+    /* Simple line-by-line search */
+    const char *text = (const char *)data;
+    size_t line_start = 0;
+    int found_any = 0;
+    
+    for (size_t i = 0; i < size; ++i) {
+        if (text[i] == '\n' || i == size - 1) {
+            size_t line_len = i - line_start;
+            if (i == size - 1 && text[i] != '\n') {
+                line_len++;
+            }
+            
+            if (line_len > 0) {
+                char line[256];
+                size_t copy_len = (line_len < sizeof(line) - 1) ? line_len : sizeof(line) - 1;
+                memcpy(line, text + line_start, copy_len);
+                line[copy_len] = '\0';
+                
+                if (strstr(line, pattern) != NULL) {
+                    terminal_write("\x1B[36m");  /* Cyan for filename */
+                    terminal_write(file_path);
+                    terminal_write("\x1B[0m: ");
+                    /* Highlight the pattern in the line */
+                    const char *match = strstr(line, pattern);
+                    if (match) {
+                        size_t before_len = match - line;
+                        if (before_len < sizeof(line)) {
+                            char before[256];
+                            size_t copy_len = (before_len < sizeof(before) - 1) ? before_len : sizeof(before) - 1;
+                            memcpy(before, line, copy_len);
+                            before[copy_len] = '\0';
+                            terminal_write(before);
+                            terminal_write("\x1B[1;31m");  /* Bold red for match */
+                            terminal_write(pattern);
+                            terminal_write("\x1B[0m");
+                            terminal_write(match + strlen(pattern));
+                        } else {
+                            terminal_write(line);
+                        }
+                    } else {
+                        terminal_write(line);
+                    }
+                    terminal_write_line("");
+                    found_any = 1;
+                }
+            }
+            
+            line_start = i + 1;
+        }
+    }
+    
+    if (!found_any) {
+        /* No matches */
+    }
+}
+
+static void shell_cmd_head(const char *args) {
+    char file_path[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, file_path, sizeof(file_path));
+    int lines = 10;
+    
+    /* Try to parse number of lines */
+    if (rest && *rest != '\0') {
+        char num_str[32];
+        shell_extract_token(rest, num_str, sizeof(num_str));
+        /* Simple atoi */
+        lines = 0;
+        for (size_t i = 0; num_str[i] && i < sizeof(num_str) - 1; ++i) {
+            if (num_str[i] >= '0' && num_str[i] <= '9') {
+                lines = lines * 10 + (num_str[i] - '0');
+            } else {
+                break;
+            }
+        }
+        if (lines == 0) {
+            lines = 10;
+        }
+    }
+    
+    if (file_path[0] == '\0') {
+        terminal_write_line("Usage: head [FILE] [LINES]");
+        return;
+    }
+    
+    if (!fs_exists(file_path)) {
+        terminal_write_line("head: file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(file_path)) {
+        terminal_write_line("head: cannot read directory.");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(file_path, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("head: unable to read file.");
+        return;
+    }
+    
+    const char *text = (const char *)data;
+    int line_count = 0;
+    for (size_t i = 0; i < size && line_count < lines; ++i) {
+        terminal_putc(text[i]);
+        if (text[i] == '\n') {
+            line_count++;
+        }
+    }
+}
+
+static void shell_cmd_tail(const char *args) {
+    char file_path[FS_MAX_PATH_LEN];
+    const char *rest = shell_extract_token(args, file_path, sizeof(file_path));
+    int lines = 10;
+    
+    if (rest && *rest != '\0') {
+        char num_str[32];
+        shell_extract_token(rest, num_str, sizeof(num_str));
+        lines = 0;
+        for (size_t i = 0; num_str[i] && i < sizeof(num_str) - 1; ++i) {
+            if (num_str[i] >= '0' && num_str[i] <= '9') {
+                lines = lines * 10 + (num_str[i] - '0');
+            } else {
+                break;
+            }
+        }
+        if (lines == 0) {
+            lines = 10;
+        }
+    }
+    
+    if (file_path[0] == '\0') {
+        terminal_write_line("Usage: tail [FILE] [LINES]");
+        return;
+    }
+    
+    if (!fs_exists(file_path)) {
+        terminal_write_line("tail: file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(file_path)) {
+        terminal_write_line("tail: cannot read directory.");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(file_path, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("tail: unable to read file.");
+        return;
+    }
+    
+    const char *text = (const char *)data;
+    int line_count = 0;
+    size_t start_pos = size;
+    
+    /* Count lines from end */
+    for (size_t i = size; i > 0; --i) {
+        if (text[i - 1] == '\n' || i == 1) {
+            line_count++;
+            if (line_count > lines) {
+                start_pos = i;
+                break;
+            }
+            if (i == 1 && text[0] != '\n') {
+                start_pos = 0;
+                break;
+            }
+        }
+    }
+    
+    for (size_t i = start_pos; i < size; ++i) {
+        terminal_putc(text[i]);
+    }
+}
+
+static void shell_cmd_wc(const char *args) {
+    const char *path = shell_skip_spaces(args);
+    if (!path || *path == '\0') {
+        terminal_write_line("Usage: wc FILE");
+        return;
+    }
+    
+    if (!fs_exists(path)) {
+        terminal_write_line("wc: file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(path)) {
+        terminal_write_line("wc: cannot count directory.");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(path, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("wc: unable to read file.");
+        return;
+    }
+    
+    const char *text = (const char *)data;
+    size_t lines = 0;
+    size_t words = 0;
+    size_t chars = size;
+    int in_word = 0;
+    
+    for (size_t i = 0; i < size; ++i) {
+        if (text[i] == '\n') {
+            lines++;
+        }
+        
+        int is_space = (text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == '\r');
+        if (is_space) {
+            if (in_word) {
+                words++;
+                in_word = 0;
+            }
+        } else {
+            in_word = 1;
+        }
+    }
+    
+    if (in_word) {
+        words++;
+    }
+    
+    print_uint64(lines);
+    terminal_write(" ");
+    print_uint64(words);
+    terminal_write(" ");
+    print_uint64(chars);
+    terminal_write(" ");
+    terminal_write_line(path);
+}
+
+static void shell_cmd_ansi_test(void) {
+    terminal_write_line("\x1B[1mANSI Escape Sequences Test\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[31mRed text\x1B[0m");
+    terminal_write_line("\x1B[32mGreen text\x1B[0m");
+    terminal_write_line("\x1B[33mYellow text\x1B[0m");
+    terminal_write_line("\x1B[34mBlue text\x1B[0m");
+    terminal_write_line("\x1B[35mMagenta text\x1B[0m");
+    terminal_write_line("\x1B[36mCyan text\x1B[0m");
+    terminal_write_line("\x1B[37mWhite text\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[1;31mBold red\x1B[0m");
+    terminal_write_line("\x1B[1;32mBold green\x1B[0m");
+    terminal_write_line("\x1B[1;33mBold yellow\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[90mBright black\x1B[0m");
+    terminal_write_line("\x1B[91mBright red\x1B[0m");
+    terminal_write_line("\x1B[92mBright green\x1B[0m");
+    terminal_write_line("\x1B[93mBright yellow\x1B[0m");
+    terminal_write_line("\x1B[94mBright blue\x1B[0m");
+    terminal_write_line("\x1B[95mBright magenta\x1B[0m");
+    terminal_write_line("\x1B[96mBright cyan\x1B[0m");
+    terminal_write_line("\x1B[97mBright white\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[41mRed background\x1B[0m");
+    terminal_write_line("\x1B[42mGreen background\x1B[0m");
+    terminal_write_line("\x1B[43mYellow background\x1B[0m");
+    terminal_write_line("\x1B[44mBlue background\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write_line("\x1B[7mInverted colors\x1B[0m");
+    terminal_write_line("");
+    
+    terminal_write("Cursor movement test: ");
+    terminal_write("\x1B[5C");  /* Move right 5 positions */
+    terminal_write_line("<- moved here");
+    
+    terminal_write_line("\x1B[2K");  /* Clear line */
+    terminal_write_line("Line cleared above");
+}
+
+static void shell_cmd_hexdump(const char *args) {
+    char file_path[FS_MAX_PATH_LEN];
+    shell_extract_token(args, file_path, sizeof(file_path));
+    
+    if (file_path[0] == '\0') {
+        terminal_write_line("Usage: hexdump FILE");
+        return;
+    }
+    
+    if (!fs_exists(file_path)) {
+        terminal_write_line("hexdump: file not found.");
+        return;
+    }
+    
+    if (fs_is_dir(file_path)) {
+        terminal_write_line("hexdump: cannot dump directory.");
+        return;
+    }
+    
+    size_t size = 0;
+    const uint8_t *data = fs_get_file_data(file_path, &size);
+    if (data == NULL && size > 0) {
+        terminal_write_line("hexdump: unable to read file.");
+        return;
+    }
+    
+    static const char hex_digits[] = "0123456789ABCDEF";
+    size_t offset = 0;
+    size_t bytes_per_line = 16;
+    
+    while (offset < size) {
+        /* Print offset in cyan */
+        terminal_write("\x1B[36m0000");
+        uint64_t off = offset;
+        char offset_str[9];
+        for (int i = 7; i >= 0; --i) {
+            offset_str[i] = hex_digits[off & 0xF];
+            off >>= 4;
+        }
+        offset_str[8] = '\0';
+        terminal_write(offset_str);
+        terminal_write("\x1B[0m  ");
+        
+        /* Print hex bytes */
+        for (size_t i = 0; i < bytes_per_line; ++i) {
+            if (offset + i < size) {
+                uint8_t byte = data[offset + i];
+                /* Color code: printable = green, non-printable = red */
+                if (byte >= 32 && byte < 127) {
+                    terminal_write("\x1B[32m");
+                } else {
+                    terminal_write("\x1B[31m");
+                }
+                terminal_putc(hex_digits[(byte >> 4) & 0xF]);
+                terminal_putc(hex_digits[byte & 0xF]);
+                terminal_write("\x1B[0m");
+            } else {
+                terminal_write("  ");
+            }
+            if (i == 7) {
+                terminal_write(" ");
+            } else {
+                terminal_write(" ");
+            }
+        }
+        
+        terminal_write(" \x1B[33m|\x1B[0m");  /* Yellow separator */
+        
+        /* Print ASCII representation */
+        for (size_t i = 0; i < bytes_per_line && offset + i < size; ++i) {
+            uint8_t byte = data[offset + i];
+            if (byte >= 32 && byte < 127) {
+                terminal_write("\x1B[32m");  /* Green for printable */
+                terminal_putc((char)byte);
+                terminal_write("\x1B[0m");
+            } else {
+                terminal_write("\x1B[31m");  /* Red for non-printable */
+                terminal_putc('.');
+                terminal_write("\x1B[0m");
+            }
+        }
+        
+        terminal_write("\x1B[33m|\x1B[0m");  /* Yellow separator */
+        terminal_write_line("");
+        offset += bytes_per_line;
+    }
 }
 
 static void shell_cmd_poweroff(void) {
@@ -494,7 +1135,8 @@ static void shell_cmd_testmem(void) {
     /* Test 1: Simple allocation */
     void *ptr1 = kmalloc(100);
     if (ptr1 == NULL) {
-        terminal_write_line("ERROR: kmalloc(100) failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: kmalloc(100) failed!");
+        terminal_write_line("");
         return;
     }
     terminal_write_line("Test 1: Allocated 100 bytes - OK");
@@ -508,7 +1150,8 @@ static void shell_cmd_testmem(void) {
     void *ptr2 = kmalloc(200);
     void *ptr3 = kmalloc(50);
     if (ptr2 == NULL || ptr3 == NULL) {
-        terminal_write_line("ERROR: Multiple allocations failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Multiple allocations failed!");
+        terminal_write_line("");
         kfree(ptr1);
         if (ptr2) kfree(ptr2);
         return;
@@ -527,13 +1170,15 @@ static void shell_cmd_testmem(void) {
     /* Test 4: Aligned allocation */
     void *ptr4 = kmalloc_aligned(64, 16);
     if (ptr4 == NULL) {
-        terminal_write_line("ERROR: Aligned allocation failed!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Aligned allocation failed!");
+        terminal_write_line("");
         kfree(ptr1);
         kfree(ptr3);
         return;
     }
     if (((uintptr_t)ptr4 & 0xF) != 0) {
-        terminal_write_line("ERROR: Alignment incorrect!");
+        terminal_write("\x1B[1;31mERROR\x1B[0m: Alignment incorrect!");
+        terminal_write_line("");
         kfree(ptr1);
         kfree(ptr3);
         kfree(ptr4);
@@ -685,6 +1330,52 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "cp")) != NULL) {
+        shell_cmd_cp(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "mv")) != NULL) {
+        shell_cmd_mv(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "find")) != NULL) {
+        shell_cmd_find(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "grep")) != NULL) {
+        shell_cmd_grep(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "head")) != NULL) {
+        shell_cmd_head(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "tail")) != NULL) {
+        shell_cmd_tail(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "wc")) != NULL) {
+        shell_cmd_wc(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "hexdump")) != NULL) {
+        shell_cmd_hexdump(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "ansi")) != NULL) {
+        (void)args;
+        shell_cmd_ansi_test();
+        return;
+    }
+
     if ((args = shell_match_command(line, "poweroff")) != NULL) {
         (void)args;
         shell_cmd_poweroff();
@@ -705,6 +1396,7 @@ static void shell_execute(const char *line) {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "ansi",
     "poweroff", "reboot", NULL
 };
 
@@ -813,9 +1505,11 @@ static int shell_maybe_autosave(void) {
     shell_last_autosave_seconds = now;
     fs_status_t status = fs_save();
     if (status == FS_OK) {
-        terminal_write_line("[autosave] Filesystem snapshot saved.");
+        terminal_write("\x1B[36m[autosave]\x1B[0m ");  /* Cyan for autosave */
+        terminal_write("\x1B[32mFilesystem snapshot saved.\x1B[0m");
+        terminal_write_line("");
     } else {
-        terminal_write("[autosave] ");
+        terminal_write("\x1B[36m[autosave]\x1B[0m ");
         shell_print_fs_error(status);
     }
     return 1;
@@ -844,6 +1538,24 @@ static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
     while (1) {
         uint16_t code;
         while (!keyboard_try_read_char_extended(&code)) {
+            /* Check for mouse scroll events */
+            mouse_event_t mouse_event;
+            if (mouse_try_get_event(&mouse_event)) {
+                if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
+                    terminal_scroll_up(3);
+                    shell_print_prompt();
+                    terminal_get_cursor(&prompt_row, &prompt_col);
+                    rendered_length = 0;
+                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
+                } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
+                    terminal_scroll_down(3);
+                    shell_print_prompt();
+                    terminal_get_cursor(&prompt_row, &prompt_col);
+                    rendered_length = 0;
+                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
+                }
+            }
+            
             if (shell_maybe_autosave()) {
                 shell_print_prompt();
                 terminal_get_cursor(&prompt_row, &prompt_col);
@@ -1062,10 +1774,23 @@ void shell_run(void) {
 
     while (1) {
         shell_maybe_autosave();
+        
+        /* Check for mouse scroll events */
+        mouse_event_t mouse_event;
+        while (mouse_try_get_event(&mouse_event)) {
+            if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
+                terminal_scroll_up(3);
+            } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
+                terminal_scroll_down(3);
+            }
+        }
+        
         shell_print_prompt();
         shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, shell_history_data, &shell_history_count, &shell_history_index);
         if (buffer[0] != '\0') {
             shell_execute(buffer);
+            /* Return to bottom after command execution */
+            terminal_scroll_to_bottom();
         }
     }
 }
