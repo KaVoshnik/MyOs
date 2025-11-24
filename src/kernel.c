@@ -7,6 +7,7 @@
 #include <filesystem.h>
 #include <ata.h>
 #include <mouse.h>
+#include <io.h>
 
 extern uint8_t _kernel_end;
 

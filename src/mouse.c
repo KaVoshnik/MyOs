@@ -36,7 +36,7 @@ static int mouse_packet_index = 0;
 static uint8_t mouse_packet[3] = {0};
 static int mouse_waiting_ack = 0;
 
-static void mouse_wait_input(void) {
+/* static void mouse_wait_input(void) {
     uint32_t timeout = 100000;
     while (timeout-- > 0) {
         if ((inb(MOUSE_STATUS_PORT) & 0x01) != 0) {
@@ -56,7 +56,7 @@ static void mouse_wait_output(void) {
 
 static int mouse_send_command(uint8_t command) {
     mouse_wait_output();
-    outb(MOUSE_COMMAND_PORT, 0xD4); /* Send command to mouse */
+    outb(MOUSE_COMMAND_PORT, 0xD4);
     mouse_wait_output();
     outb(MOUSE_DATA_PORT, command);
     
@@ -64,10 +64,10 @@ static int mouse_send_command(uint8_t command) {
     uint8_t response = inb(MOUSE_DATA_PORT);
     
     if (response == MOUSE_ACK) {
-        return 0; /* Success */
+        return 0;
     }
-    return -1; /* Error */
-}
+    return -1;
+} */
 
 static void mouse_buffer_push(const mouse_event_t *event) {
     size_t next_head = (mouse_buffer_head + 1) % MOUSE_BUFFER_SIZE;
