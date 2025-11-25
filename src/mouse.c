@@ -194,8 +194,15 @@ void mouse_init(void) {
     }
     config |= 0x02; /* Enable mouse IRQ */
     config |= 0x01; /* Ensure keyboard IRQ stays enabled */
+    config &= ~(1 << 4); /* Ensure keyboard clock enabled */
+    config &= ~(1 << 5); /* Ensure mouse clock enabled */
     if (!ps2_write_command(0x60) || !ps2_write_data(config)) {
         terminal_write_line("[mouse] Failed to write PS/2 controller config");
+        return;
+    }
+
+    if (!ps2_write_command(0xAE)) {
+        terminal_write_line("[mouse] Failed to enable PS/2 keyboard port");
         return;
     }
 
