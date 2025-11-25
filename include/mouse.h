@@ -2,6 +2,7 @@
 #define _MYOS_MOUSE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define MOUSE_EVENT_SCROLL_UP    1
 #define MOUSE_EVENT_SCROLL_DOWN  2
@@ -20,8 +21,8 @@ void mouse_init(void);
 int mouse_is_available(void);
 int mouse_get_event(mouse_event_t *event);
 int mouse_try_get_event(mouse_event_t *event);
-void mouse_handle_packet(uint8_t packet[3]);
 void mouse_buffer_push_direct(mouse_event_t *event);
+size_t mouse_packet_length(void);
 
 #endif /* _MYOS_MOUSE_H */
 

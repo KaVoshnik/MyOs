@@ -222,68 +222,70 @@ __attribute__((interrupt))
 static void irq_mouse(struct interrupt_frame *frame) {
     (void)frame;
     static uint8_t mouse_packet[4] = {0};
-    static int mouse_packet_index = 0;
-    static int mouse_has_wheel = 1; /* Assume mouse has wheel, will auto-detect */
+    static size_t mouse_packet_index = 0;
     
-    /* Check if this is actually a mouse packet BEFORE reading data */
     uint8_t status = inb(0x64);
     if (!(status & 0x20)) {
-        /* Not a mouse packet, might be keyboard - don't process */
         pic_send_eoi(12);
         return;
     }
     
-    /* This is a mouse packet */
     uint8_t data = inb(0x60);
     
-    if (mouse_packet_index < 4) {
-        mouse_packet[mouse_packet_index++] = data;
+    size_t expected_length = mouse_packet_length();
+    if (expected_length < 3) {
+        expected_length = 3;
+    } else if (expected_length > 4) {
+        expected_length = 4;
     }
     
-    /* Process packet when we have at least 3 bytes */
-    if (mouse_packet_index >= 3) {
-        uint8_t flags = mouse_packet[0];
-        
-        /* Validate packet - first byte should have bit 3 set for valid mouse packet */
-        if (!(flags & 0x08)) {
-            /* Invalid packet, reset */
-            mouse_packet_index = 0;
-            pic_send_eoi(12);
-            return;
-        }
-        
-        int8_t x_delta = (int8_t)mouse_packet[1];
-        int8_t y_delta = (int8_t)mouse_packet[2];
-        
-        int buttons = 0;
-        if (flags & 0x01) buttons |= MOUSE_EVENT_BUTTON_LEFT;
-        if (flags & 0x02) buttons |= MOUSE_EVENT_BUTTON_RIGHT;
-        if (flags & 0x04) buttons |= MOUSE_EVENT_BUTTON_MIDDLE;
-        
-        int scroll = 0;
-        /* Check for 4th byte (scroll wheel) */
-        if (mouse_packet_index == 4 && mouse_has_wheel) {
-            int8_t scroll_delta = (int8_t)mouse_packet[3];
-            if (scroll_delta > 0) {
-                scroll = MOUSE_EVENT_SCROLL_UP;
-            } else if (scroll_delta < 0) {
-                scroll = MOUSE_EVENT_SCROLL_DOWN;
-            }
-        }
-        
-        mouse_event_t event = {
-            .x = x_delta,
-            .y = y_delta,
-            .buttons = buttons,
-            .scroll = scroll
-        };
-        
-        /* Push event to buffer */
-        mouse_buffer_push_direct(&event);
-        
-        /* Reset for next packet */
+    if (mouse_packet_index < expected_length && mouse_packet_index < sizeof(mouse_packet)) {
+        mouse_packet[mouse_packet_index++] = data;
+    } else {
         mouse_packet_index = 0;
+        pic_send_eoi(12);
+        return;
     }
+    
+    if (mouse_packet_index < expected_length) {
+        pic_send_eoi(12);
+        return;
+    }
+    
+    uint8_t flags = mouse_packet[0];
+    if (!(flags & 0x08)) {
+        mouse_packet_index = 0;
+        pic_send_eoi(12);
+        return;
+    }
+    
+    int8_t x_delta = (int8_t)mouse_packet[1];
+    int8_t y_delta = (int8_t)mouse_packet[2];
+    
+    int buttons = 0;
+    if (flags & 0x01) buttons |= MOUSE_EVENT_BUTTON_LEFT;
+    if (flags & 0x02) buttons |= MOUSE_EVENT_BUTTON_RIGHT;
+    if (flags & 0x04) buttons |= MOUSE_EVENT_BUTTON_MIDDLE;
+    
+    int scroll = 0;
+    if (expected_length == 4) {
+        int8_t scroll_delta = (int8_t)mouse_packet[3];
+        if (scroll_delta > 0) {
+            scroll = MOUSE_EVENT_SCROLL_UP;
+        } else if (scroll_delta < 0) {
+            scroll = MOUSE_EVENT_SCROLL_DOWN;
+        }
+    }
+    
+    mouse_event_t event = {
+        .x = x_delta,
+        .y = y_delta,
+        .buttons = buttons,
+        .scroll = scroll
+    };
+    
+    mouse_buffer_push_direct(&event);
+    mouse_packet_index = 0;
     
     pic_send_eoi(12);
 }
