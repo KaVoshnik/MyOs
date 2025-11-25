@@ -205,14 +205,6 @@ static void irq_timer(struct interrupt_frame *frame) {
 __attribute__((interrupt))
 static void irq_keyboard(struct interrupt_frame *frame) {
     (void)frame;
-    /* Check if this is actually keyboard data */
-    uint8_t status = inb(0x64);
-    if (status & 0x20) {
-        /* This is mouse data, not keyboard - ignore */
-        pic_send_eoi(1);
-        return;
-    }
-    
     uint8_t scancode = inb(0x60);
     keyboard_handle_scancode(scancode);
     pic_send_eoi(1);
