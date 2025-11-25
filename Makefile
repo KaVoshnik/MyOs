@@ -13,7 +13,7 @@ CFLAGS := -m64 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mgene
 LDFLAGS := -nostdlib -z max-page-size=0x1000
 
 SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c src/system.c src/thread.c
-ASM_SRC := src/thread_switch.S
+ASM_SRC := src/thread_switch.S src/irq_entry.S
 OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(ASM_SRC:%.S=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
 
 .PHONY: all clean run iso

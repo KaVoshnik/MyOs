@@ -97,7 +97,7 @@ typedef struct fs_node {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
-    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "ansi",
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "ansi",
     "poweroff", "reboot", NULL
 };
 ```
@@ -181,11 +181,13 @@ void system_poweroff(void) {
 ### Тестовые команды
 - `ansi` - тест ANSI последовательностей
 - `testmem` - тест памяти
+- `threads` - список активных потоков ядра
+- `spawn TEXT` - демонстрационный запуск фонового потока, печатающего TEXT
 
 ## Особенности реализации
 
 ### Многозадачность
-Система использует прерывания таймера (PIT) для базовой многозадачности и обработки фоновых задач.
+Система использует кооперативный планировщик потоков на базе PIT: ядро создаёт bootstrap- и idle-потоки, а оболочка может запускать пользовательские задачи через `spawn`. Команда `threads` помогает диагностировать состояние планировщика (id, имя, статус).
 
 ### Управление памятью
 Аллокатор поддерживает выравнивание и отслеживает использование памяти для отладки.

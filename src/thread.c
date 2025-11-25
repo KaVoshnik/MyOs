@@ -8,6 +8,7 @@
 #define THREAD_STACK_DEFAULT 4096
 #define THREAD_MIN_STACK 2048
 #define THREAD_NAME_MAX 32
+#define THREAD_QUANTUM_TICKS 5
 
 extern void thread_context_switch(thread_context_t *old_ctx, thread_context_t *new_ctx);
 
@@ -15,6 +16,7 @@ typedef struct thread {
     uint64_t id;
     thread_state_t state;
     thread_context_t context;
+    irq_regs_t regs;
     void *stack;
     size_t stack_size;
     thread_entry_t entry;
@@ -24,6 +26,9 @@ typedef struct thread {
     struct thread *next;
     struct thread *prev;
     char name[THREAD_NAME_MAX];
+    uint64_t run_ticks;
+    uint64_t quantum_ticks_left;
+    int in_ready_queue;
 } thread_t;
 
 static thread_t thread_table[THREAD_MAX_COUNT];
@@ -42,6 +47,10 @@ static void thread_trampoline(void);
 static void idle_thread(void *arg);
 static int interrupts_save_and_disable(void);
 static void interrupts_restore_state(int enabled);
+static void scheduler_reset_quantum(thread_t *thread);
+static void save_context_from_interrupt(thread_t *thread, irq_regs_t *regs, struct interrupt_frame *frame);
+static void load_context_to_interrupt(thread_t *thread, irq_regs_t *regs, struct interrupt_frame *frame);
+static void thread_block_current_locked(thread_state_t new_state);
 
 static const char *state_names[] = {
     "unused",
@@ -72,6 +81,9 @@ void thread_system_init(void) {
     bootstrap->arg = NULL;
     strncpy(bootstrap->name, "bootstrap", THREAD_NAME_MAX - 1);
     current_thread = bootstrap;
+    bootstrap->in_ready_queue = 0;
+    bootstrap->run_ticks = 0;
+    scheduler_reset_quantum(bootstrap);
 
     uint64_t idle_id = thread_create("idle", idle_thread, NULL, THREAD_MIN_STACK);
     (void)idle_id;
@@ -120,6 +132,10 @@ uint64_t thread_create(const char *name, thread_entry_t entry, void *arg, size_t
     slot->state = THREAD_READY;
     slot->next = NULL;
     slot->prev = NULL;
+    slot->run_ticks = 0;
+    slot->in_ready_queue = 0;
+    scheduler_reset_quantum(slot);
+    memset(&slot->regs, 0, sizeof(slot->regs));
 
     if (!name || name[0] == '\0') {
         strncpy(slot->name, "thread", THREAD_NAME_MAX - 1);
@@ -154,6 +170,7 @@ void thread_exit(int status) {
 
     if (self->waiting && self->waiting->state == THREAD_BLOCKED) {
         self->waiting->state = THREAD_READY;
+        scheduler_reset_quantum(self->waiting);
         thread_enqueue(self->waiting);
         self->waiting = NULL;
     }
@@ -170,6 +187,47 @@ void thread_yield(void) {
     int was_enabled = interrupts_save_and_disable();
     scheduler_switch(1);
     interrupts_restore_state(was_enabled);
+}
+
+void thread_handle_timer_interrupt(struct interrupt_frame *frame, irq_regs_t *regs) {
+    if (!current_thread) {
+        return;
+    }
+
+    save_context_from_interrupt(current_thread, regs, frame);
+    current_thread->run_ticks++;
+
+    if (current_thread->state == THREAD_RUNNING && current_thread->quantum_ticks_left > 0) {
+        current_thread->quantum_ticks_left--;
+    }
+
+    int need_schedule = 0;
+    if (current_thread->state != THREAD_RUNNING) {
+        need_schedule = 1;
+    } else if (current_thread->quantum_ticks_left == 0) {
+        need_schedule = 1;
+    }
+
+    if (!need_schedule) {
+        return;
+    }
+
+    thread_t *candidate = thread_dequeue();
+    if (!candidate) {
+        current_thread->state = THREAD_RUNNING;
+        scheduler_reset_quantum(current_thread);
+        return;
+    }
+
+    if (current_thread->state == THREAD_RUNNING) {
+        current_thread->state = THREAD_READY;
+        thread_enqueue(current_thread);
+    }
+
+    current_thread = candidate;
+    current_thread->state = THREAD_RUNNING;
+    scheduler_reset_quantum(current_thread);
+    load_context_to_interrupt(current_thread, regs, frame);
 }
 
 int thread_join(uint64_t id, int *exit_status) {
@@ -191,8 +249,7 @@ int thread_join(uint64_t id, int *exit_status) {
             return -3;
         }
         target->waiting = current_thread;
-        current_thread->state = THREAD_BLOCKED;
-        scheduler_switch(0);
+        thread_block_current_locked(THREAD_BLOCKED);
         was_enabled = interrupts_save_and_disable();
     }
 
@@ -226,6 +283,8 @@ size_t thread_snapshot_list(thread_snapshot_t *buffer, size_t capacity) {
         buffer[count].id = thread_table[i].id;
         buffer[count].state = thread_table[i].state;
         buffer[count].name = thread_table[i].name;
+        buffer[count].run_ticks = thread_table[i].run_ticks;
+        buffer[count].quantum_ticks = thread_table[i].quantum_ticks_left;
         ++count;
     }
     interrupts_restore_state(was_enabled);
@@ -233,8 +292,12 @@ size_t thread_snapshot_list(thread_snapshot_t *buffer, size_t capacity) {
 }
 
 static void thread_enqueue(thread_t *thread) {
+    if (!thread || thread->in_ready_queue) {
+        return;
+    }
     thread->next = NULL;
     thread->prev = ready_tail;
+    thread->in_ready_queue = 1;
     if (ready_tail) {
         ready_tail->next = thread;
     }
@@ -257,6 +320,7 @@ static thread_t *thread_dequeue(void) {
     }
     thread->next = NULL;
     thread->prev = NULL;
+     thread->in_ready_queue = 0;
     return thread;
 }
 
@@ -305,6 +369,10 @@ static void thread_destroy(thread_t *thread) {
     thread->next = NULL;
     thread->prev = NULL;
     thread->name[0] = '\0';
+    thread->run_ticks = 0;
+    thread->quantum_ticks_left = 0;
+    thread->in_ready_queue = 0;
+    memset(&thread->regs, 0, sizeof(thread->regs));
 }
 
 static void scheduler_switch(int requeue_current) {
@@ -329,6 +397,7 @@ static void scheduler_switch(int requeue_current) {
 
     current_thread = next;
     next->state = THREAD_RUNNING;
+    scheduler_reset_quantum(next);
     if (previous) {
         thread_context_switch(&previous->context, &next->context);
     } else {
@@ -365,5 +434,68 @@ static void interrupts_restore_state(int enabled) {
     if (enabled) {
         interrupts_enable();
     }
+}
+
+static void thread_block_current_locked(thread_state_t new_state) {
+    if (!current_thread) {
+        return;
+    }
+    current_thread->state = new_state;
+    scheduler_switch(0);
+}
+
+void thread_block_current(thread_state_t new_state) {
+    int was_enabled = interrupts_save_and_disable();
+    thread_block_current_locked(new_state);
+    interrupts_restore_state(was_enabled);
+}
+
+void thread_unblock_by_id(uint64_t id) {
+    int was_enabled = interrupts_save_and_disable();
+    thread_t *thread = thread_find(id);
+    if (thread && thread->state == THREAD_BLOCKED) {
+        thread->state = THREAD_READY;
+        scheduler_reset_quantum(thread);
+        thread_enqueue(thread);
+    }
+    interrupts_restore_state(was_enabled);
+}
+
+static void scheduler_reset_quantum(thread_t *thread) {
+    if (thread) {
+        thread->quantum_ticks_left = THREAD_QUANTUM_TICKS;
+    }
+}
+
+static void save_context_from_interrupt(thread_t *thread, irq_regs_t *regs, struct interrupt_frame *frame) {
+    if (!thread || !regs || !frame) {
+        return;
+    }
+    thread->context.r15 = regs->r15;
+    thread->context.r14 = regs->r14;
+    thread->context.r13 = regs->r13;
+    thread->context.r12 = regs->r12;
+    thread->context.rbx = regs->rbx;
+    thread->context.rbp = regs->rbp;
+    thread->context.rsp = frame->rsp;
+    thread->context.rip = frame->rip;
+    thread->context.rflags = frame->rflags;
+    thread->regs = *regs;
+}
+
+static void load_context_to_interrupt(thread_t *thread, irq_regs_t *regs, struct interrupt_frame *frame) {
+    if (!thread || !regs || !frame) {
+        return;
+    }
+    *regs = thread->regs;
+    regs->r15 = thread->context.r15;
+    regs->r14 = thread->context.r14;
+    regs->r13 = thread->context.r13;
+    regs->r12 = thread->context.r12;
+    regs->rbx = thread->context.rbx;
+    regs->rbp = thread->context.rbp;
+    frame->rsp = thread->context.rsp;
+    frame->rip = thread->context.rip;
+    frame->rflags = thread->context.rflags;
 }
 

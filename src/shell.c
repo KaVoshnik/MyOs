@@ -8,20 +8,36 @@
 #include <system.h>
 #include <ata.h>
 #include <thread.h>
+#include <interrupts.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
 #define SHELL_AUTOCOMPLETE_MAX_MATCHES 32
 #define SHELL_AUTOSAVE_INTERVAL_SECONDS 60
 #define SHELL_THREAD_SNAPSHOT_MAX 32
+#define SHELL_DEMO_MAX_WAIT 32
 
 static char *shell_history_data[SHELL_HISTORY_SIZE];
 static size_t shell_history_count = 0;
 static size_t shell_history_index = 0;
 static uint64_t shell_last_autosave_seconds = 0;
+static uint64_t shell_demo_wait_ids[SHELL_DEMO_MAX_WAIT];
+static size_t shell_demo_wait_head = 0;
+static size_t shell_demo_wait_tail = 0;
+static size_t shell_demo_wait_count = 0;
 static void shell_cmd_threads(void);
 static void shell_cmd_spawn(const char *args);
 static void shell_spawn_worker(void *arg);
+static void shell_cmd_loadtest(const char *args);
+static void shell_cmd_signal(void);
+static void shell_loadtest_worker(void *arg);
+static void shell_demo_wait_push(uint64_t id);
+static uint64_t shell_demo_wait_pop(void);
+static void shell_cmd_loadtest(const char *args);
+static void shell_cmd_signal(void);
+static void shell_loadtest_worker(void *arg);
+static void shell_demo_wait_push(uint64_t id);
+static uint64_t shell_demo_wait_pop(void);
 
 static void print_uint64(uint64_t value) {
     char buffer[21];
@@ -169,8 +185,10 @@ static void shell_cmd_help(void) {
     terminal_write_line("  tail [FILE] [LINES] - show last lines of file");
     terminal_write_line("  wc FILE - count lines, words, characters");
     terminal_write_line("  hexdump FILE - show file in hexadecimal");
-    terminal_write_line("  threads    - list all kernel threads");
-    terminal_write_line("  spawn TEXT - start background thread printing TEXT");
+    terminal_write_line("  threads    - list active kernel threads");
+    terminal_write_line("  spawn TEXT - start background worker printing TEXT");
+    terminal_write_line("  loadtest   - launch demo worker threads");
+    terminal_write_line("  signal     - wake one demo worker thread");
     terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
@@ -1063,13 +1081,17 @@ static void shell_cmd_threads(void) {
         terminal_write_line("Нет активных потоков.");
         return;
     }
-    terminal_write_line("ID     STATE      NAME");
+    terminal_write_line("ID   STATE      QUANTUM  RUN      NAME");
     for (size_t i = 0; i < count; ++i) {
         terminal_write("  ");
         print_uint64(snapshots[i].id);
-        terminal_write("    ");
+        terminal_write("   ");
         terminal_write(thread_state_name(snapshots[i].state));
-        terminal_write("    ");
+        terminal_write("   ");
+        print_uint64(snapshots[i].quantum_ticks);
+        terminal_write("       ");
+        print_uint64(snapshots[i].run_ticks);
+        terminal_write("   ");
         terminal_write_line(snapshots[i].name ? snapshots[i].name : "(null)");
     }
 }
@@ -1111,6 +1133,95 @@ static void shell_cmd_spawn(const char *args) {
         print_uint64(id);
         terminal_write_line(".");
     }
+}
+
+static void shell_demo_wait_push(uint64_t id) {
+    if (id == 0) {
+        return;
+    }
+    interrupts_disable();
+    size_t idx = shell_demo_wait_head;
+    for (size_t i = 0; i < shell_demo_wait_count; ++i) {
+        if (shell_demo_wait_ids[idx] == id) {
+            interrupts_enable();
+            return;
+        }
+        idx = (idx + 1) % SHELL_DEMO_MAX_WAIT;
+    }
+    if (shell_demo_wait_count < SHELL_DEMO_MAX_WAIT) {
+        shell_demo_wait_ids[shell_demo_wait_tail] = id;
+        shell_demo_wait_tail = (shell_demo_wait_tail + 1) % SHELL_DEMO_MAX_WAIT;
+        shell_demo_wait_count++;
+    }
+    interrupts_enable();
+}
+
+static uint64_t shell_demo_wait_pop(void) {
+    interrupts_disable();
+    if (shell_demo_wait_count == 0) {
+        interrupts_enable();
+        return 0;
+    }
+    uint64_t id = shell_demo_wait_ids[shell_demo_wait_head];
+    shell_demo_wait_head = (shell_demo_wait_head + 1) % SHELL_DEMO_MAX_WAIT;
+    shell_demo_wait_count--;
+    interrupts_enable();
+    return id;
+}
+
+static void shell_loadtest_worker(void *arg) {
+    char *message = (char *)arg;
+    uint64_t id = thread_current_id();
+    for (int i = 0; i < 5; ++i) {
+        terminal_write("[demo ");
+        print_uint64(id);
+        terminal_write("] ");
+        terminal_write_line(message ? message : "background task");
+        shell_demo_wait_push(id);
+        thread_block_current(THREAD_BLOCKED);
+    }
+    if (message) {
+        kfree(message);
+    }
+    thread_exit(0);
+}
+
+static void shell_cmd_loadtest(const char *args) {
+    const char *text = shell_skip_spaces(args);
+    if (!text || *text == '\0') {
+        text = "demo worker";
+    }
+    size_t len = strlen(text) + 1;
+    int started = 0;
+    for (int i = 0; i < 3 && i < SHELL_DEMO_MAX_WAIT; ++i) {
+        char *copy = (char *)kmalloc(len);
+        if (!copy) {
+            terminal_write_line("loadtest: not enough memory.");
+            break;
+        }
+        memcpy(copy, text, len);
+        if (thread_create("demo", shell_loadtest_worker, copy, 0) == 0) {
+            terminal_write_line("loadtest: failed to create thread.");
+            kfree(copy);
+            break;
+        }
+        started++;
+    }
+    if (started > 0) {
+        terminal_write_line("Demo threads launched. Use 'signal' to wake them.");
+    }
+}
+
+static void shell_cmd_signal(void) {
+    uint64_t id = shell_demo_wait_pop();
+    if (id == 0) {
+        terminal_write_line("signal: no demo threads are waiting.");
+        return;
+    }
+    thread_unblock_by_id(id);
+    terminal_write("signal: woke thread ");
+    print_uint64(id);
+    terminal_write_line("");
 }
 
 static void shell_cmd_poweroff(void) {
@@ -1461,6 +1572,17 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "loadtest")) != NULL) {
+        shell_cmd_loadtest(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "signal")) != NULL) {
+        (void)args;
+        shell_cmd_signal();
+        return;
+    }
+
     if ((args = shell_match_command(line, "ansi")) != NULL) {
         (void)args;
         shell_cmd_ansi_test();
@@ -1487,7 +1609,7 @@ static void shell_execute(const char *line) {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
-    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "ansi",
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "loadtest", "signal", "ansi",
     "poweroff", "reboot", NULL
 };
 

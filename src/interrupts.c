@@ -4,6 +4,10 @@
 #include <string.h>
 #include <pit.h>
 #include <keyboard.h>
+#include <thread.h>
+
+extern void irq_stub_0(void);
+void irq_common_handler(uint64_t vector, irq_regs_t *regs, struct interrupt_frame *frame);
 
 #define IDT_ENTRY_COUNT 256
 #define IDT_TYPE_INTERRUPT_GATE 0x8E
@@ -195,18 +199,31 @@ DEFINE_ISR_NOERR(30)
 DEFINE_ISR_NOERR(31)
 
 __attribute__((interrupt))
-static void irq_timer(struct interrupt_frame *frame) {
-    (void)frame;
-    pit_handle_tick();
-    pic_send_eoi(0);
-}
-
-__attribute__((interrupt))
 static void irq_keyboard(struct interrupt_frame *frame) {
     (void)frame;
     uint8_t scancode = inb(0x60);
     keyboard_handle_scancode(scancode);
     pic_send_eoi(1);
+}
+
+void irq_common_handler(uint64_t vector, irq_regs_t *regs, struct interrupt_frame *frame) {
+    if (vector == IRQ_BASE + 0) {
+        pit_handle_tick();
+        thread_handle_timer_interrupt(frame, regs);
+        pic_send_eoi(0);
+        return;
+    }
+
+    if (vector == IRQ_BASE + 1) {
+        uint8_t scancode = inb(0x60);
+        keyboard_handle_scancode(scancode);
+        pic_send_eoi(1);
+        return;
+    }
+
+    if (vector >= IRQ_BASE && vector < IRQ_BASE + 16) {
+        pic_send_eoi((uint8_t)(vector - IRQ_BASE));
+    }
 }
 
 void interrupts_init(void) {
@@ -245,7 +262,7 @@ void interrupts_init(void) {
     idt_set_gate(30, (void *)isr30);
     idt_set_gate(31, (void *)isr31);
 
-    idt_set_gate(IRQ_BASE + 0, (void *)irq_timer);
+    idt_set_gate(IRQ_BASE + 0, (void *)irq_stub_0);
     idt_set_gate(IRQ_BASE + 1, (void *)irq_keyboard);
 
     idtr.limit = sizeof(idt) - 1;
@@ -262,4 +279,3 @@ void interrupts_enable(void) {
 void interrupts_disable(void) {
     __asm__ volatile("cli");
 }
-
