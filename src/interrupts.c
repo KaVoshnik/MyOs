@@ -214,6 +214,7 @@ static void irq_keyboard(struct interrupt_frame *frame) {
     pic_send_eoi(1);
 }
 
+#if ENABLE_MOUSE_DRIVER
 __attribute__((interrupt))
 static void irq_mouse(struct interrupt_frame *frame) {
     (void)frame;
@@ -285,6 +286,7 @@ static void irq_mouse(struct interrupt_frame *frame) {
     
     pic_send_eoi(12);
 }
+#endif
 
 void interrupts_init(void) {
     memset(idt, 0, sizeof(idt));
