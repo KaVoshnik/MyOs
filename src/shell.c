@@ -7,7 +7,6 @@
 #include <filesystem.h>
 #include <system.h>
 #include <ata.h>
-#include <mouse.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -1556,24 +1555,6 @@ static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
     while (1) {
         uint16_t code;
         while (!keyboard_try_read_char_extended(&code)) {
-            /* Check for mouse scroll events */
-            mouse_event_t mouse_event;
-            if (mouse_try_get_event(&mouse_event)) {
-                if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
-                    terminal_scroll_up(3);
-                    shell_print_prompt();
-                    terminal_get_cursor(&prompt_row, &prompt_col);
-                    rendered_length = 0;
-                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
-                } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
-                    terminal_scroll_down(3);
-                    shell_print_prompt();
-                    terminal_get_cursor(&prompt_row, &prompt_col);
-                    rendered_length = 0;
-                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
-                }
-            }
-            
             if (shell_maybe_autosave()) {
                 shell_print_prompt();
                 terminal_get_cursor(&prompt_row, &prompt_col);
@@ -1792,16 +1773,6 @@ void shell_run(void) {
 
     while (1) {
         shell_maybe_autosave();
-        
-        /* Check for mouse scroll events */
-        mouse_event_t mouse_event;
-        while (mouse_try_get_event(&mouse_event)) {
-            if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
-                terminal_scroll_up(3);
-            } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
-                terminal_scroll_down(3);
-            }
-        }
         
         shell_print_prompt();
         shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, shell_history_data, &shell_history_count, &shell_history_index);
