@@ -7,7 +7,6 @@
 #include <filesystem.h>
 #include <system.h>
 #include <ata.h>
-#include <mouse.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -545,17 +544,40 @@ typedef struct {
 static void shell_find_callback(const fs_dir_entry_t *entry, void *user_data) {
     shell_find_data_t *data = (shell_find_data_t *)user_data;
     char full_path[FS_MAX_PATH_LEN];
+    size_t base_len = strlen(data->base_path);
+    size_t name_len = strlen(entry->name);
     
-    if (strcmp(data->base_path, "/") == 0) {
-        strcpy(full_path, "/");
-        strcat(full_path, entry->name);
-    } else {
-        strcpy(full_path, data->base_path);
-        if (full_path[strlen(full_path) - 1] != '/') {
-            strcat(full_path, "/");
-        }
-        strcat(full_path, entry->name);
+    if (base_len >= sizeof(full_path) || name_len >= sizeof(full_path)) {
+        terminal_write_line("find: path too long, skipping entry.");
+        return;
     }
+    
+    size_t pos = 0;
+    if (base_len == 0) {
+        full_path[pos++] = '/';
+    } else {
+        memcpy(full_path, data->base_path, base_len);
+        pos = base_len;
+    }
+    
+    if (!(pos == 1 && full_path[0] == '/')) {
+        if (pos == 0 || full_path[pos - 1] != '/') {
+            if (pos + 1 >= sizeof(full_path)) {
+                terminal_write_line("find: path too long, skipping entry.");
+                return;
+            }
+            full_path[pos++] = '/';
+        }
+    }
+    
+    if (pos + name_len >= sizeof(full_path)) {
+        terminal_write_line("find: path too long, skipping entry.");
+        return;
+    }
+    
+    memcpy(full_path + pos, entry->name, name_len);
+    pos += name_len;
+    full_path[pos] = '\0';
     
     if (strstr(entry->name, data->pattern) != NULL) {
         terminal_write_line(full_path);
@@ -573,38 +595,24 @@ static void shell_find_callback(const fs_dir_entry_t *entry, void *user_data) {
 }
 
 static void shell_cmd_find(const char *args) {
-    const char *path = shell_skip_spaces(args);
-    char pattern[FS_MAX_NAME_LEN];
+    char first[FS_MAX_PATH_LEN];
+    char second[FS_MAX_NAME_LEN];
+    const char *rest = shell_extract_token(args, first, sizeof(first));
+    rest = shell_extract_token(rest, second, sizeof(second));
     
-    if (!path || *path == '\0') {
+    if (first[0] == '\0') {
         terminal_write_line("Usage: find [PATH] PATTERN");
         return;
     }
     
-    /* Extract pattern (last token) */
-    const char *last_space = path;
-    const char *cursor = path;
-    while (*cursor) {
-        if (*cursor == ' ') {
-            last_space = cursor;
-        }
-        ++cursor;
-    }
-    
-    if (last_space == path) {
-        /* No path specified, use current directory */
+    const char *path = NULL;
+    const char *pattern = NULL;
+    if (second[0] == '\0') {
         path = ".";
-        shell_extract_token(args, pattern, sizeof(pattern));
+        pattern = first;
     } else {
-        shell_extract_token(last_space, pattern, sizeof(pattern));
-        char path_buf[FS_MAX_PATH_LEN];
-        size_t path_len = last_space - path;
-        if (path_len >= sizeof(path_buf)) {
-            path_len = sizeof(path_buf) - 1;
-        }
-        memcpy(path_buf, path, path_len);
-        path_buf[path_len] = '\0';
-        path = path_buf;
+        path = first;
+        pattern = second;
     }
     
     if (pattern[0] == '\0') {
@@ -618,7 +626,12 @@ static void shell_cmd_find(const char *args) {
     if (strcmp(path, ".") == 0) {
         fs_get_cwd(search_path, sizeof(search_path));
     } else {
-        strcpy(search_path, path);
+        size_t path_len = strlen(path);
+        if (path_len >= sizeof(search_path)) {
+            terminal_write_line("find: path too long.");
+            return;
+        }
+        memcpy(search_path, path, path_len + 1);
     }
     
     shell_find_data_t find_data = {
@@ -627,7 +640,11 @@ static void shell_cmd_find(const char *args) {
         .found_count = &found_count
     };
     
-    fs_list_dir(search_path, shell_find_callback, &find_data);
+    fs_status_t status = fs_list_dir(search_path, shell_find_callback, &find_data);
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+        return;
+    }
     
     if (found_count == 0) {
         terminal_write_line("No matches found.");
@@ -1538,24 +1555,6 @@ static size_t shell_read_line_with_history(char *buffer, size_t buffer_size,
     while (1) {
         uint16_t code;
         while (!keyboard_try_read_char_extended(&code)) {
-            /* Check for mouse scroll events */
-            mouse_event_t mouse_event;
-            if (mouse_try_get_event(&mouse_event)) {
-                if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
-                    terminal_scroll_up(3);
-                    shell_print_prompt();
-                    terminal_get_cursor(&prompt_row, &prompt_col);
-                    rendered_length = 0;
-                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
-                } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
-                    terminal_scroll_down(3);
-                    shell_print_prompt();
-                    terminal_get_cursor(&prompt_row, &prompt_col);
-                    rendered_length = 0;
-                    shell_refresh_input(buffer, length, cursor_pos, prompt_row, prompt_col, &rendered_length);
-                }
-            }
-            
             if (shell_maybe_autosave()) {
                 shell_print_prompt();
                 terminal_get_cursor(&prompt_row, &prompt_col);
@@ -1774,16 +1773,6 @@ void shell_run(void) {
 
     while (1) {
         shell_maybe_autosave();
-        
-        /* Check for mouse scroll events */
-        mouse_event_t mouse_event;
-        while (mouse_try_get_event(&mouse_event)) {
-            if (mouse_event.scroll == MOUSE_EVENT_SCROLL_UP) {
-                terminal_scroll_up(3);
-            } else if (mouse_event.scroll == MOUSE_EVENT_SCROLL_DOWN) {
-                terminal_scroll_down(3);
-            }
-        }
         
         shell_print_prompt();
         shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, shell_history_data, &shell_history_count, &shell_history_index);

@@ -4,7 +4,6 @@
 #include <string.h>
 #include <pit.h>
 #include <keyboard.h>
-#include <mouse.h>
 
 #define IDT_ENTRY_COUNT 256
 #define IDT_TYPE_INTERRUPT_GATE 0x8E
@@ -106,7 +105,7 @@ static void pic_remap(void) {
     io_wait();
 
     outb(PIC1_DATA, 0xFC); /* unmask IRQ0 and IRQ1 */
-    outb(PIC2_DATA, 0xEF); /* unmask IRQ12 (mouse) */
+    outb(PIC2_DATA, 0xFF); /* keep all slave IRQs masked */
 }
 
 static void pic_send_eoi(uint8_t irq) {
@@ -205,87 +204,9 @@ static void irq_timer(struct interrupt_frame *frame) {
 __attribute__((interrupt))
 static void irq_keyboard(struct interrupt_frame *frame) {
     (void)frame;
-    /* Check if this is actually keyboard data */
-    uint8_t status = inb(0x64);
-    if (status & 0x20) {
-        /* This is mouse data, not keyboard - ignore */
-        pic_send_eoi(1);
-        return;
-    }
-    
     uint8_t scancode = inb(0x60);
     keyboard_handle_scancode(scancode);
     pic_send_eoi(1);
-}
-
-__attribute__((interrupt))
-static void irq_mouse(struct interrupt_frame *frame) {
-    (void)frame;
-    static uint8_t mouse_packet[4] = {0};
-    static int mouse_packet_index = 0;
-    static int mouse_has_wheel = 1; /* Assume mouse has wheel, will auto-detect */
-    
-    /* Check if this is actually a mouse packet BEFORE reading data */
-    uint8_t status = inb(0x64);
-    if (!(status & 0x20)) {
-        /* Not a mouse packet, might be keyboard - don't process */
-        pic_send_eoi(12);
-        return;
-    }
-    
-    /* This is a mouse packet */
-    uint8_t data = inb(0x60);
-    
-    if (mouse_packet_index < 4) {
-        mouse_packet[mouse_packet_index++] = data;
-    }
-    
-    /* Process packet when we have at least 3 bytes */
-    if (mouse_packet_index >= 3) {
-        uint8_t flags = mouse_packet[0];
-        
-        /* Validate packet - first byte should have bit 3 set for valid mouse packet */
-        if (!(flags & 0x08)) {
-            /* Invalid packet, reset */
-            mouse_packet_index = 0;
-            pic_send_eoi(12);
-            return;
-        }
-        
-        int8_t x_delta = (int8_t)mouse_packet[1];
-        int8_t y_delta = (int8_t)mouse_packet[2];
-        
-        int buttons = 0;
-        if (flags & 0x01) buttons |= MOUSE_EVENT_BUTTON_LEFT;
-        if (flags & 0x02) buttons |= MOUSE_EVENT_BUTTON_RIGHT;
-        if (flags & 0x04) buttons |= MOUSE_EVENT_BUTTON_MIDDLE;
-        
-        int scroll = 0;
-        /* Check for 4th byte (scroll wheel) */
-        if (mouse_packet_index == 4 && mouse_has_wheel) {
-            int8_t scroll_delta = (int8_t)mouse_packet[3];
-            if (scroll_delta > 0) {
-                scroll = MOUSE_EVENT_SCROLL_UP;
-            } else if (scroll_delta < 0) {
-                scroll = MOUSE_EVENT_SCROLL_DOWN;
-            }
-        }
-        
-        mouse_event_t event = {
-            .x = x_delta,
-            .y = y_delta,
-            .buttons = buttons,
-            .scroll = scroll
-        };
-        
-        /* Push event to buffer */
-        mouse_buffer_push_direct(&event);
-        
-        /* Reset for next packet */
-        mouse_packet_index = 0;
-    }
-    
-    pic_send_eoi(12);
 }
 
 void interrupts_init(void) {
@@ -326,7 +247,6 @@ void interrupts_init(void) {
 
     idt_set_gate(IRQ_BASE + 0, (void *)irq_timer);
     idt_set_gate(IRQ_BASE + 1, (void *)irq_keyboard);
-    idt_set_gate(IRQ_BASE + 12, (void *)irq_mouse);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt[0];
