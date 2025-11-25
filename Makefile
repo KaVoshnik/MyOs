@@ -12,8 +12,9 @@ NASM := nasm
 CFLAGS := -m64 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Werror -nostdlib -nostdinc -fno-builtin -I include
 LDFLAGS := -nostdlib -z max-page-size=0x1000
 
-SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c src/system.c
-OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
+SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c src/system.c src/thread.c
+ASM_SRC := src/thread_switch.S
+OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(ASM_SRC:%.S=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
 
 .PHONY: all clean run iso
 
@@ -26,6 +27,10 @@ $(BUILD_DIR)/boot.o: src/boot.asm | $(BUILD_DIR)
 	$(NASM) -f elf64 $< -o $@
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+	mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
