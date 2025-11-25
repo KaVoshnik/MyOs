@@ -1054,6 +1054,7 @@ static void shell_cmd_hexdump(const char *args) {
         terminal_write_line("");
         offset += bytes_per_line;
     }
+}
 
 static void shell_cmd_threads(void) {
     thread_snapshot_t snapshots[SHELL_THREAD_SNAPSHOT_MAX];
@@ -1110,7 +1111,6 @@ static void shell_cmd_spawn(const char *args) {
         print_uint64(id);
         terminal_write_line(".");
     }
-}
 }
 
 static void shell_cmd_poweroff(void) {
