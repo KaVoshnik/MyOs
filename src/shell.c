@@ -7,16 +7,21 @@
 #include <filesystem.h>
 #include <system.h>
 #include <ata.h>
+#include <thread.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
 #define SHELL_AUTOCOMPLETE_MAX_MATCHES 32
 #define SHELL_AUTOSAVE_INTERVAL_SECONDS 60
+#define SHELL_THREAD_SNAPSHOT_MAX 32
 
 static char *shell_history_data[SHELL_HISTORY_SIZE];
 static size_t shell_history_count = 0;
 static size_t shell_history_index = 0;
 static uint64_t shell_last_autosave_seconds = 0;
+static void shell_cmd_threads(void);
+static void shell_cmd_spawn(const char *args);
+static void shell_spawn_worker(void *arg);
 
 static void print_uint64(uint64_t value) {
     char buffer[21];
@@ -164,6 +169,8 @@ static void shell_cmd_help(void) {
     terminal_write_line("  tail [FILE] [LINES] - show last lines of file");
     terminal_write_line("  wc FILE - count lines, words, characters");
     terminal_write_line("  hexdump FILE - show file in hexadecimal");
+    terminal_write_line("  threads    - list all kernel threads");
+    terminal_write_line("  spawn TEXT - start background thread printing TEXT");
     terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
@@ -1047,6 +1054,63 @@ static void shell_cmd_hexdump(const char *args) {
         terminal_write_line("");
         offset += bytes_per_line;
     }
+
+static void shell_cmd_threads(void) {
+    thread_snapshot_t snapshots[SHELL_THREAD_SNAPSHOT_MAX];
+    size_t count = thread_snapshot_list(snapshots, SHELL_THREAD_SNAPSHOT_MAX);
+    if (count == 0) {
+        terminal_write_line("Нет активных потоков.");
+        return;
+    }
+    terminal_write_line("ID     STATE      NAME");
+    for (size_t i = 0; i < count; ++i) {
+        terminal_write("  ");
+        print_uint64(snapshots[i].id);
+        terminal_write("    ");
+        terminal_write(thread_state_name(snapshots[i].state));
+        terminal_write("    ");
+        terminal_write_line(snapshots[i].name ? snapshots[i].name : "(null)");
+    }
+}
+
+static void shell_spawn_worker(void *arg) {
+    char *message = (char *)arg;
+    uint64_t id = thread_current_id();
+    for (int i = 0; i < 5; ++i) {
+        terminal_write("[thread ");
+        print_uint64(id);
+        terminal_write("] ");
+        terminal_write_line(message ? message : "(null)");
+        thread_yield();
+    }
+    if (message) {
+        kfree(message);
+    }
+    thread_exit(0);
+}
+
+static void shell_cmd_spawn(const char *args) {
+    const char *text = shell_skip_spaces(args);
+    if (!text || *text == '\0') {
+        text = "background task";
+    }
+    size_t len = strlen(text) + 1;
+    char *data = (char *)kmalloc(len);
+    if (!data) {
+        terminal_write_line("spawn: не хватает памяти.");
+        return;
+    }
+    memcpy(data, text, len);
+    uint64_t id = thread_create("shell-worker", shell_spawn_worker, data, 0);
+    if (id == 0) {
+        terminal_write_line("spawn: не удалось создать поток.");
+        kfree(data);
+    } else {
+        terminal_write("Создан поток ");
+        print_uint64(id);
+        terminal_write_line(".");
+    }
+}
 }
 
 static void shell_cmd_poweroff(void) {
@@ -1282,6 +1346,11 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if (strcmp(line, "threads") == 0) {
+        shell_cmd_threads();
+        return;
+    }
+
     const char *args;
 
     if ((args = shell_match_command(line, "pwd")) != NULL) {
@@ -1387,6 +1456,11 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "spawn")) != NULL) {
+        shell_cmd_spawn(args);
+        return;
+    }
+
     if ((args = shell_match_command(line, "ansi")) != NULL) {
         (void)args;
         shell_cmd_ansi_test();
@@ -1413,7 +1487,7 @@ static void shell_execute(const char *line) {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
-    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "ansi",
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "ansi",
     "poweroff", "reboot", NULL
 };
 

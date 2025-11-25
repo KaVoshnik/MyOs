@@ -73,7 +73,6 @@ void thread_system_init(void) {
     strncpy(bootstrap->name, "bootstrap", THREAD_NAME_MAX - 1);
     current_thread = bootstrap;
 
-    /* Create idle thread so scheduler always has a runnable task */
     uint64_t idle_id = thread_create("idle", idle_thread, NULL, THREAD_MIN_STACK);
     (void)idle_id;
 
@@ -130,12 +129,12 @@ uint64_t thread_create(const char *name, thread_entry_t entry, void *arg, size_t
     slot->name[THREAD_NAME_MAX - 1] = '\0';
 
     uintptr_t stack_top = (uintptr_t)stack + stack_size;
-    stack_top &= ~(uintptr_t)0xFUL; /* 16-byte alignment */
+    stack_top &= ~(uintptr_t)0xFUL;
 
     memset(&slot->context, 0, sizeof(slot->context));
     slot->context.rsp = stack_top;
     slot->context.rip = (uint64_t)thread_trampoline;
-    slot->context.rflags = 0x202; /* IF flag set */
+    slot->context.rflags = 0x202;
 
     thread_enqueue(slot);
     interrupts_restore_state(was_enabled);
@@ -146,7 +145,7 @@ void thread_exit(int status) {
     int was_enabled = interrupts_save_and_disable();
     thread_t *self = current_thread;
     if (!self) {
-        interrupts_enable();
+        interrupts_restore_state(was_enabled);
         return;
     }
 
@@ -162,7 +161,6 @@ void thread_exit(int status) {
     scheduler_switch(0);
     interrupts_restore_state(was_enabled);
 
-    /* Should never reach here */
     for (;;) {
         __asm__ volatile("hlt");
     }
@@ -190,7 +188,7 @@ int thread_join(uint64_t id, int *exit_status) {
     while (target->state != THREAD_ZOMBIE) {
         if (target->waiting && target->waiting != current_thread) {
             interrupts_restore_state(was_enabled);
-            return -3; /* Already has a waiter */
+            return -3;
         }
         target->waiting = current_thread;
         current_thread->state = THREAD_BLOCKED;
@@ -334,7 +332,6 @@ static void scheduler_switch(int requeue_current) {
     if (previous) {
         thread_context_switch(&previous->context, &next->context);
     } else {
-        /* No previous thread (should not happen after init) */
         thread_context_switch(&current_thread->context, &current_thread->context);
     }
 }
@@ -369,334 +366,4 @@ static void interrupts_restore_state(int enabled) {
         interrupts_enable();
     }
 }
-#include <thread.h>
-#include <memory.h>
-#include <string.h>
-#include <terminal.h>
-#include <pit.h>
-#include <interrupts.h>
-
-#define THREAD_MAX_COUNT 16
-#define THREAD_STACK_SIZE 0x4000
-#define THREAD_NAME_MAX   31
-
-typedef enum thread_state {
-    THREAD_UNUSED = 0,
-    THREAD_READY,
-    THREAD_RUNNING,
-    THREAD_SLEEPING,
-    THREAD_ZOMBIE
-} thread_state_t;
-
-typedef struct thread_context {
-    uint64_t r15;
-    uint64_t r14;
-    uint64_t r13;
-    uint64_t r12;
-    uint64_t rbx;
-    uint64_t rbp;
-    uint64_t rsp;
-} thread_context_t;
-
-typedef struct thread {
-    thread_context_t context;
-    uint8_t *stack;
-    size_t stack_size;
-    thread_state_t state;
-    thread_entry_t entry;
-    void *arg;
-    uint64_t sleep_until_tick;
-    char name[THREAD_NAME_MAX + 1];
-    uint32_t id;
-} thread_t;
-
-static thread_t threads[THREAD_MAX_COUNT];
-static thread_t *current_thread = NULL;
-static uint32_t next_thread_id = 1;
-static int thread_system_ready = 0;
-
-static void thread_context_switch(thread_context_t *old_ctx, thread_context_t *new_ctx) __attribute__((naked));
-static void thread_trampoline(void);
-static void thread_idle(void *arg);
-static void thread_schedule_locked(void);
-static void thread_cleanup_zombies(void);
-static thread_t *thread_pick_next(void);
-static void thread_print_uint(uint64_t value);
-
-__attribute__((naked))
-static void thread_context_switch(thread_context_t *old_ctx, thread_context_t *new_ctx) {
-    __asm__ volatile(
-        "movq %r15, 0(%rdi)\n\t"
-        "movq %r14, 8(%rdi)\n\t"
-        "movq %r13, 16(%rdi)\n\t"
-        "movq %r12, 24(%rdi)\n\t"
-        "movq %rbx, 32(%rdi)\n\t"
-        "movq %rbp, 40(%rdi)\n\t"
-        "movq %rsp, 48(%rdi)\n\t"
-
-        "movq 48(%rsi), %rsp\n\t"
-        "movq 40(%rsi), %rbp\n\t"
-        "movq 32(%rsi), %rbx\n\t"
-        "movq 24(%rsi), %r12\n\t"
-        "movq 16(%rsi), %r13\n\t"
-        "movq 8(%rsi), %r14\n\t"
-        "movq 0(%rsi), %r15\n\t"
-        "ret\n\t"
-    );
-}
-
-static void thread_reset(thread_t *thread) {
-    if (!thread) {
-        return;
-    }
-    if (thread->stack) {
-        kfree(thread->stack);
-    }
-    memset(thread, 0, sizeof(thread_t));
-    thread->state = THREAD_UNUSED;
-}
-
-void thread_system_init(void) {
-    if (thread_system_ready) {
-        return;
-    }
-    memset(threads, 0, sizeof(threads));
-    thread_t *boot = &threads[0];
-    boot->state = THREAD_RUNNING;
-    boot->id = next_thread_id++;
-    strncpy(boot->name, "boot", THREAD_NAME_MAX);
-    current_thread = boot;
-    thread_system_ready = 1;
-    thread_create(thread_idle, NULL, "idle");
-}
-
-static thread_t *thread_alloc_slot(void) {
-    for (size_t i = 0; i < THREAD_MAX_COUNT; ++i) {
-        if (threads[i].state == THREAD_UNUSED) {
-            return &threads[i];
-        }
-    }
-    return NULL;
-}
-
-int thread_create(thread_entry_t entry, void *arg, const char *name) {
-    if (!thread_system_ready || entry == NULL) {
-        return -1;
-    }
-    interrupts_disable();
-    thread_t *slot = thread_alloc_slot();
-    if (!slot) {
-        interrupts_enable();
-        return -1;
-    }
-
-    memset(&slot->context, 0, sizeof(slot->context));
-    slot->stack_size = THREAD_STACK_SIZE;
-    slot->stack = (uint8_t *)kmalloc(slot->stack_size);
-    if (!slot->stack) {
-        interrupts_enable();
-        return -1;
-    }
-
-    uintptr_t stack_top = (uintptr_t)slot->stack + slot->stack_size;
-    stack_top &= ~((uintptr_t)0xF);
-    uint64_t *stack64 = (uint64_t *)stack_top;
-    *(--stack64) = (uint64_t)thread_trampoline;
-    slot->context.rsp = (uint64_t)stack64;
-    slot->context.rbp = 0;
-    slot->context.rbx = 0;
-    slot->context.r12 = 0;
-    slot->context.r13 = 0;
-    slot->context.r14 = 0;
-    slot->context.r15 = 0;
-
-    slot->entry = entry;
-    slot->arg = arg;
-    slot->state = THREAD_READY;
-    slot->sleep_until_tick = 0;
-    slot->id = next_thread_id++;
-    if (name && name[0] != '\0') {
-        strncpy(slot->name, name, THREAD_NAME_MAX);
-    } else {
-        strncpy(slot->name, "thread", THREAD_NAME_MAX);
-    }
-    slot->name[THREAD_NAME_MAX] = '\0';
-    interrupts_enable();
-    return (int)slot->id;
-}
-
-static void thread_exit(void) __attribute__((noreturn));
-
-static void thread_exit(void) {
-    interrupts_disable();
-    if (current_thread) {
-        current_thread->state = THREAD_ZOMBIE;
-    }
-    thread_schedule_locked();
-    __builtin_unreachable();
-}
-
-static void thread_trampoline(void) {
-    interrupts_enable();
-    if (current_thread && current_thread->entry) {
-        current_thread->entry(current_thread->arg);
-    }
-    thread_exit();
-}
-
-static void thread_idle(void *arg) {
-    (void)arg;
-    while (1) {
-        interrupts_enable();
-        __asm__ volatile("hlt");
-        interrupts_disable();
-        thread_yield();
-    }
-}
-
-static void thread_cleanup_zombies(void) {
-    for (size_t i = 0; i < THREAD_MAX_COUNT; ++i) {
-        thread_t *t = &threads[i];
-        if (t->state == THREAD_ZOMBIE && t != current_thread) {
-            thread_reset(t);
-        }
-    }
-}
-
-static thread_t *thread_pick_next(void) {
-    if (!current_thread) {
-        return NULL;
-    }
-    size_t start = (size_t)(current_thread - threads);
-    for (size_t offset = 1; offset <= THREAD_MAX_COUNT; ++offset) {
-        size_t idx = (start + offset) % THREAD_MAX_COUNT;
-        thread_t *candidate = &threads[idx];
-        if (candidate->state == THREAD_READY) {
-            return candidate;
-        }
-    }
-    return current_thread;
-}
-
-static void thread_schedule_locked(void) {
-    thread_cleanup_zombies();
-    thread_t *next = thread_pick_next();
-    if (!next || next == current_thread) {
-        return;
-    }
-    thread_t *prev = current_thread;
-    if (prev && prev->state == THREAD_RUNNING) {
-        prev->state = THREAD_READY;
-    }
-    next->state = THREAD_RUNNING;
-    current_thread = next;
-    thread_context_switch(&prev->context, &next->context);
-}
-
-void thread_yield(void) {
-    if (!thread_system_ready) {
-        return;
-    }
-    interrupts_disable();
-    thread_schedule_locked();
-    interrupts_enable();
-}
-
-void thread_sleep_ticks(uint64_t ticks) {
-    if (!thread_system_ready || ticks == 0) {
-        thread_yield();
-        return;
-    }
-    interrupts_disable();
-    if (current_thread) {
-        current_thread->sleep_until_tick = pit_ticks() + ticks;
-        current_thread->state = THREAD_SLEEPING;
-    }
-    thread_schedule_locked();
-    interrupts_enable();
-}
-
-void thread_sleep_ms(uint64_t milliseconds) {
-    uint32_t freq = pit_current_frequency();
-    if (freq == 0) {
-        freq = 100;
-    }
-    uint64_t ticks = (milliseconds * freq + 999) / 1000;
-    if (ticks == 0) {
-        ticks = 1;
-    }
-    thread_sleep_ticks(ticks);
-}
-
-const char *thread_current_name(void) {
-    if (!current_thread) {
-        return "unknown";
-    }
-    return current_thread->name[0] ? current_thread->name : "thread";
-}
-
-void thread_dump_state(void) {
-    if (!thread_system_ready) {
-        terminal_write_line("Thread system not initialized.");
-        return;
-    }
-    interrupts_disable();
-    terminal_write_line("Active threads:");
-    for (size_t i = 0; i < THREAD_MAX_COUNT; ++i) {
-        thread_t *t = &threads[i];
-        if (t->state == THREAD_UNUSED) {
-            continue;
-        }
-        const char *state = "unknown";
-        switch (t->state) {
-            case THREAD_READY: state = "ready"; break;
-            case THREAD_RUNNING: state = "running"; break;
-            case THREAD_SLEEPING: state = "sleeping"; break;
-            case THREAD_ZOMBIE: state = "zombie"; break;
-            default: break;
-        }
-        terminal_write("  #");
-        thread_print_uint(t->id);
-        terminal_write(" ");
-        terminal_write(t->name);
-        terminal_write(" [");
-        terminal_write(state);
-        terminal_write("]");
-        if (t == current_thread) {
-            terminal_write(" <current>");
-        }
-        terminal_putc('\n');
-    }
-    interrupts_enable();
-}
-
-void thread_tick(void) {
-    if (!thread_system_ready) {
-        return;
-    }
-    uint64_t now = pit_ticks();
-    for (size_t i = 0; i < THREAD_MAX_COUNT; ++i) {
-        thread_t *t = &threads[i];
-        if (t->state == THREAD_SLEEPING && now >= t->sleep_until_tick) {
-            t->state = THREAD_READY;
-            t->sleep_until_tick = 0;
-        }
-    }
-}
-
-static void thread_print_uint(uint64_t value) {
-    char buffer[21];
-    int index = 20;
-    buffer[index] = '\0';
-    if (value == 0) {
-        buffer[--index] = '0';
-    } else {
-        while (value > 0 && index > 0) {
-            buffer[--index] = (char)('0' + (value % 10));
-            value /= 10;
-        }
-    }
-    terminal_write(&buffer[index]);
-}
-
 
