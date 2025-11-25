@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef ENABLE_MOUSE_DRIVER
+#define ENABLE_MOUSE_DRIVER 0
+#endif
+
 #define MOUSE_EVENT_SCROLL_UP    1
 #define MOUSE_EVENT_SCROLL_DOWN  2
 #define MOUSE_EVENT_BUTTON_LEFT  4

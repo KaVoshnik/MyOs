@@ -106,7 +106,11 @@ static void pic_remap(void) {
     io_wait();
 
     outb(PIC1_DATA, 0xFC); /* unmask IRQ0 and IRQ1 */
+#if ENABLE_MOUSE_DRIVER
     outb(PIC2_DATA, 0xEF); /* unmask IRQ12 (mouse) */
+#else
+    outb(PIC2_DATA, 0xFF); /* keep all slave IRQs masked */
+#endif
 }
 
 static void pic_send_eoi(uint8_t irq) {
@@ -320,7 +324,9 @@ void interrupts_init(void) {
 
     idt_set_gate(IRQ_BASE + 0, (void *)irq_timer);
     idt_set_gate(IRQ_BASE + 1, (void *)irq_keyboard);
+#if ENABLE_MOUSE_DRIVER
     idt_set_gate(IRQ_BASE + 12, (void *)irq_mouse);
+#endif
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt[0];

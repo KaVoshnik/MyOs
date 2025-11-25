@@ -26,7 +26,8 @@ void kernel_main(void) {
     interrupts_init();
     pit_init(100);
     keyboard_init();
-    
+
+#if ENABLE_MOUSE_DRIVER
     /* Clear any pending PS/2 data before initializing mouse */
     while ((inb(0x64) & 0x01) != 0) {
         inb(0x60); /* Discard any pending data */
@@ -45,6 +46,9 @@ void kernel_main(void) {
             inb(0x60);
         }
     }
+#else
+    terminal_write_line("[kernel] Mouse driver disabled.");
+#endif
     
     interrupts_enable();
 

@@ -175,6 +175,7 @@ static int mouse_buffer_pop(mouse_event_t *event) {
     return 1;
 }
 
+#if ENABLE_MOUSE_DRIVER
 void mouse_init(void) {
     mouse_available = 0;
     mouse_wheel_supported = 0;
@@ -230,6 +231,14 @@ void mouse_init(void) {
         terminal_write_line("[mouse] Mouse driver ready");
     }
 }
+#else
+void mouse_init(void) {
+    mouse_available = 0;
+    mouse_wheel_supported = 0;
+    mouse_buffer_head = mouse_buffer_tail = 0;
+    terminal_write_line("[mouse] Driver disabled by configuration");
+}
+#endif
 
 int mouse_is_available(void) {
     return mouse_available;
@@ -247,6 +256,12 @@ int mouse_try_get_event(mouse_event_t *event) {
 }
 
 size_t mouse_packet_length(void) {
+#if ENABLE_MOUSE_DRIVER
     return mouse_wheel_supported ? 4 : 3;
+#else
+    (void)mouse_wheel_supported;
+    return 3;
+#endif
 }
+
 
