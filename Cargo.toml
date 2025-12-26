@@ -1,6 +1,17 @@
 [package]
-name = "MyOs"
+name = "my_os"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+bootloader = "0.9"
+x86_64 = "0.14"
+
+[package.metadata.bootloader]
+# можно оставить пустым
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
