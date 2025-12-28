@@ -120,10 +120,7 @@ void user_system_save_users(void) {
     
     for (size_t i = 0; i < user_count && pos < sizeof(buffer) - 100; ++i) {
         user_t *user = &users[i];
-        int written = 0;
         
-        /* Format: username:hash:uid:admin\n */
-        const char *fmt = "%s:%s:%llu:%d\n";
         /* Simple sprintf-like function */
         size_t len = strlen(user->username);
         if (pos + len < sizeof(buffer) - 1) {
