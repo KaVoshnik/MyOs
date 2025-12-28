@@ -8,6 +8,7 @@
 #include <ata.h>
 #include <io.h>
 #include <thread.h>
+#include <process.h>
 
 extern uint8_t _kernel_end;
 
@@ -27,6 +28,7 @@ void kernel_main(void) {
     pit_init(100);
     keyboard_init();
     thread_system_init();
+    process_system_init();
     
     interrupts_enable();
 

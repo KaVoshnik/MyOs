@@ -205,6 +205,71 @@ int thread_join(uint64_t id, int *exit_status) {
     return 0;
 }
 
+int thread_kill(uint64_t id) {
+    if (id == 0) {
+        return -1; /* Cannot kill thread 0 */
+    }
+    
+    int was_enabled = interrupts_save_and_disable();
+    thread_t *target = thread_find(id);
+    if (!target) {
+        interrupts_restore_state(was_enabled);
+        return -1; /* Thread not found */
+    }
+    
+    if (target == current_thread) {
+        interrupts_restore_state(was_enabled);
+        return -2; /* Cannot kill self, use thread_exit() */
+    }
+    
+    if (target->state == THREAD_UNUSED || target->state == THREAD_ZOMBIE) {
+        interrupts_restore_state(was_enabled);
+        return -3; /* Thread already dead */
+    }
+    
+    /* Remove from ready queue if present */
+    if (target->state == THREAD_READY) {
+        if (target->prev) {
+            target->prev->next = target->next;
+        } else {
+            /* Was head of queue */
+            if (ready_head == target) {
+                ready_head = target->next;
+            }
+        }
+        if (target->next) {
+            target->next->prev = target->prev;
+        } else {
+            /* Was tail of queue */
+            if (ready_tail == target) {
+                ready_tail = target->prev;
+            }
+        }
+        target->next = NULL;
+        target->prev = NULL;
+    }
+    
+    /* Wake up any thread waiting for this one */
+    if (target->waiting && target->waiting->state == THREAD_BLOCKED) {
+        target->waiting->state = THREAD_READY;
+        thread_enqueue(target->waiting);
+        target->waiting = NULL;
+    }
+    
+    /* Mark as zombie and clean up */
+    int was_running = (target->state == THREAD_RUNNING);
+    target->exit_status = -1; /* Killed */
+    target->state = THREAD_ZOMBIE;
+    
+    /* If thread was running, force a context switch */
+    if (was_running) {
+        scheduler_switch(0);
+    }
+    
+    interrupts_restore_state(was_enabled);
+    return 0;
+}
+
 const char *thread_state_name(thread_state_t state) {
     if ((size_t)state >= (sizeof(state_names) / sizeof(state_names[0]))) {
         return "unknown";

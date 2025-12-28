@@ -8,6 +8,7 @@
 #include <system.h>
 #include <ata.h>
 #include <thread.h>
+#include <process.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -170,7 +171,9 @@ static void shell_cmd_help(void) {
     terminal_write_line("  wc FILE - count lines, words, characters");
     terminal_write_line("  hexdump FILE - show file in hexadecimal");
     terminal_write_line("  threads    - list all kernel threads");
-    terminal_write_line("  spawn TEXT - start background thread printing TEXT");
+    terminal_write_line("  ps         - show detailed process information");
+    terminal_write_line("  kill PID   - kill a process by PID");
+    terminal_write_line("  spawn TEXT - start background process printing TEXT");
     terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  myfetch    - display system information with logo");
     terminal_write_line("  poweroff   - shut down the system");
@@ -1204,12 +1207,145 @@ static void shell_cmd_threads(void) {
     }
 }
 
+static void shell_cmd_ps(void) {
+    process_snapshot_t snapshots[64];
+    size_t count = process_snapshot_list(snapshots, 64);
+    if (count == 0) {
+        terminal_write_line("No active processes.");
+        return;
+    }
+    
+    uint64_t current_pid = process_current_pid();
+    
+    /* Header with colors */
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write("  PID   PPID  STATE      NAME");
+    terminal_write_line("");
+    terminal_write("\x1B[0m");  /* Reset */
+    
+    for (size_t i = 0; i < count; ++i) {
+        /* Highlight current process */
+        if (snapshots[i].pid == current_pid) {
+            terminal_write("\x1B[1;32m");  /* Bold green */
+            terminal_write("* ");
+        } else {
+            terminal_write("  ");
+        }
+        
+        /* PID */
+        terminal_write("\x1B[33m");  /* Yellow */
+        print_uint64(snapshots[i].pid);
+        terminal_write("   ");
+        
+        /* PPID */
+        terminal_write("\x1B[35m");  /* Magenta */
+        print_uint64(snapshots[i].ppid);
+        terminal_write("   ");
+        
+        /* State with color coding */
+        const char *state_name = process_state_name(snapshots[i].state);
+        switch (snapshots[i].state) {
+            case PROCESS_RUNNING:
+                terminal_write("\x1B[32m");  /* Green */
+                break;
+            case PROCESS_SLEEPING:
+                terminal_write("\x1B[33m");  /* Yellow */
+                break;
+            case PROCESS_ZOMBIE:
+                terminal_write("\x1B[31m");  /* Red */
+                break;
+            case PROCESS_STOPPED:
+                terminal_write("\x1B[37m");  /* White */
+                break;
+            default:
+                terminal_write("\x1B[37m");  /* White */
+                break;
+        }
+        terminal_write(state_name);
+        /* Pad state name to align */
+        size_t state_len = strlen(state_name);
+        for (size_t j = state_len; j < 11; ++j) {
+            terminal_write(" ");
+        }
+        
+        /* Name */
+        terminal_write("\x1B[0m");  /* Reset */
+        terminal_write("  ");
+        terminal_write_line(snapshots[i].name ? snapshots[i].name : "(null)");
+    }
+    
+    terminal_write("\x1B[0m");  /* Reset */
+    terminal_write_line("");
+    terminal_write("* = current process");
+}
+
+static void shell_cmd_kill(const char *args) {
+    const char *id_str = shell_skip_spaces(args);
+    if (!id_str || *id_str == '\0') {
+        terminal_write_line("Usage: kill <process_id>");
+        terminal_write_line("Example: kill 5");
+        return;
+    }
+    
+    /* Parse process ID */
+    uint64_t pid = 0;
+    while (*id_str >= '0' && *id_str <= '9') {
+        pid = pid * 10 + (*id_str - '0');
+        ++id_str;
+    }
+    
+    if (pid == 0) {
+        terminal_write_line("kill: invalid process ID (must be > 0)");
+        return;
+    }
+    
+    if (pid == 1) {
+        terminal_write_line("kill: cannot kill init process (PID 1)");
+        return;
+    }
+    
+    uint64_t current_pid = process_current_pid();
+    if (pid == current_pid) {
+        terminal_write_line("kill: cannot kill current process (use 'exit' or let it finish)");
+        return;
+    }
+    
+    int result = process_kill(pid);
+    if (result == 0) {
+        terminal_write("\x1B[32m");  /* Green */
+        terminal_write("Process ");
+        print_uint64(pid);
+        terminal_write_line(" killed.");
+        terminal_write("\x1B[0m");
+    } else if (result == -1) {
+        terminal_write("\x1B[31m");  /* Red */
+        terminal_write("kill: process ");
+        print_uint64(pid);
+        terminal_write_line(" not found.");
+        terminal_write("\x1B[0m");
+    } else if (result == -2) {
+        terminal_write_line("kill: cannot kill self.");
+    } else if (result == -3) {
+        terminal_write("\x1B[33m");  /* Yellow */
+        terminal_write("kill: process ");
+        print_uint64(pid);
+        terminal_write_line(" is already dead.");
+        terminal_write("\x1B[0m");
+    } else {
+        terminal_write("\x1B[31m");  /* Red */
+        terminal_write("kill: failed to kill process ");
+        print_uint64(pid);
+        terminal_write_line(".");
+        terminal_write("\x1B[0m");
+    }
+}
+
 static void shell_spawn_worker(void *arg) {
     char *message = (char *)arg;
-    uint64_t id = thread_current_id();
+    uint64_t pid = process_current_pid();
     for (int i = 0; i < 5; ++i) {
-        terminal_write("[thread ");
-        print_uint64(id);
+        terminal_write("[process ");
+        print_uint64(pid);
         terminal_write("] ");
         terminal_write_line(message ? message : "(null)");
         thread_yield();
@@ -1217,7 +1353,7 @@ static void shell_spawn_worker(void *arg) {
     if (message) {
         kfree(message);
     }
-    thread_exit(0);
+    process_exit(0);
 }
 
 static void shell_cmd_spawn(const char *args) {
@@ -1232,13 +1368,13 @@ static void shell_cmd_spawn(const char *args) {
         return;
     }
     memcpy(data, text, len);
-    uint64_t id = thread_create("shell-worker", shell_spawn_worker, data, 0);
-    if (id == 0) {
-        terminal_write_line("spawn: failed to create thread.");
+    uint64_t pid = process_create("shell-worker", shell_spawn_worker, data, 0);
+    if (pid == 0) {
+        terminal_write_line("spawn: failed to create process.");
         kfree(data);
     } else {
-        terminal_write("Created thread ");
-        print_uint64(id);
+        terminal_write("Created process ");
+        print_uint64(pid);
         terminal_write_line(".");
     }
 }
@@ -1481,6 +1617,11 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if (strcmp(line, "ps") == 0) {
+        shell_cmd_ps();
+        return;
+    }
+
     const char *args;
 
     if ((args = shell_match_command(line, "pwd")) != NULL) {
@@ -1586,6 +1727,11 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "kill")) != NULL) {
+        shell_cmd_kill(args);
+        return;
+    }
+
     if ((args = shell_match_command(line, "spawn")) != NULL) {
         shell_cmd_spawn(args);
         return;
@@ -1623,8 +1769,8 @@ static void shell_execute(const char *line) {
 static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
-    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "ansi",
-    "myfetch", "poweroff", "reboot", NULL
+    "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
+    "spawn", "ansi", "myfetch", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
