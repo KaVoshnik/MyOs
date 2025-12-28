@@ -38,27 +38,10 @@ uint64_t thread_create(const char *name, thread_entry_t entry, void *arg, size_t
 void thread_exit(int status);
 void thread_yield(void);
 int thread_join(uint64_t id, int *exit_status);
+int thread_kill(uint64_t id);
 uint64_t thread_current_id(void);
 const char *thread_state_name(thread_state_t state);
 size_t thread_snapshot_list(thread_snapshot_t *buffer, size_t capacity);
-
-#endif /* _MYOS_THREAD_H */
-#ifndef _MYOS_THREAD_H
-#define _MYOS_THREAD_H
-
-#include <stdint.h>
-#include <stddef.h>
-
-typedef void (*thread_entry_t)(void *arg);
-
-void thread_system_init(void);
-int thread_create(thread_entry_t entry, void *arg, const char *name);
-void thread_yield(void);
-void thread_sleep_ticks(uint64_t ticks);
-void thread_sleep_ms(uint64_t milliseconds);
-const char *thread_current_name(void);
-void thread_dump_state(void);
-void thread_tick(void);
 
 #endif /* _MYOS_THREAD_H */
 
