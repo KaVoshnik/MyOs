@@ -1190,7 +1190,7 @@ static void shell_cmd_threads(void) {
     thread_snapshot_t snapshots[SHELL_THREAD_SNAPSHOT_MAX];
     size_t count = thread_snapshot_list(snapshots, SHELL_THREAD_SNAPSHOT_MAX);
     if (count == 0) {
-        terminal_write_line("Нет активных потоков.");
+        terminal_write_line("No active threads.");
         return;
     }
     terminal_write_line("ID     STATE      NAME");
@@ -1228,16 +1228,16 @@ static void shell_cmd_spawn(const char *args) {
     size_t len = strlen(text) + 1;
     char *data = (char *)kmalloc(len);
     if (!data) {
-        terminal_write_line("spawn: не хватает памяти.");
+        terminal_write_line("spawn: out of memory.");
         return;
     }
     memcpy(data, text, len);
     uint64_t id = thread_create("shell-worker", shell_spawn_worker, data, 0);
     if (id == 0) {
-        terminal_write_line("spawn: не удалось создать поток.");
+        terminal_write_line("spawn: failed to create thread.");
         kfree(data);
     } else {
-        terminal_write("Создан поток ");
+        terminal_write("Created thread ");
         print_uint64(id);
         terminal_write_line(".");
     }

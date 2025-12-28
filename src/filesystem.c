@@ -40,6 +40,23 @@ typedef struct __attribute__((packed)) {
 
 static uint8_t *fs_image_buffer = NULL;
 
+/* Validate path length to prevent buffer overflows.
+ * Returns 1 if path is valid (length < FS_MAX_PATH_LEN), 0 otherwise.
+ */
+static int fs_validate_path_length(const char *path) {
+    if (!path) {
+        return 0;
+    }
+    size_t len = 0;
+    while (path[len] != '\0') {
+        if (len >= FS_MAX_PATH_LEN) {
+            return 0; /* Path too long */
+        }
+        ++len;
+    }
+    return 1; /* Path length is valid */
+}
+
 static const char *fs_skip_separators(const char *path) {
     while (path && *path == '/') {
         ++path;
@@ -168,6 +185,11 @@ static fs_node_t *fs_start_for_path(const char *path) {
 }
 
 static fs_node_t *fs_walk(const char *path) {
+    /* Validate path length first to prevent buffer overflows */
+    if (path && !fs_validate_path_length(path)) {
+        return NULL; /* Path too long */
+    }
+    
     fs_node_t *current = fs_start_for_path(path);
     if (!current) {
         return NULL;
@@ -224,6 +246,11 @@ static fs_node_t *fs_walk(const char *path) {
 static fs_status_t fs_prepare_parent(const char *path, fs_node_t **parent_out, char leaf[FS_MAX_NAME_LEN]) {
     if (!path || *path == '\0') {
         return FS_ERR_INVALID;
+    }
+    
+    /* Validate path length to prevent buffer overflows */
+    if (!fs_validate_path_length(path)) {
+        return FS_ERR_INVALID; /* Path too long */
     }
 
     fs_node_t *current = fs_start_for_path(path);
@@ -353,6 +380,11 @@ fs_status_t fs_mkdir(const char *path) {
     if (!fs_root) {
         return FS_ERR_INVALID;
     }
+    
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
 
     if (fs_walk(path)) {
         return FS_ERR_EXIST;
@@ -381,6 +413,11 @@ fs_status_t fs_create_file(const char *path) {
     if (!fs_root) {
         return FS_ERR_INVALID;
     }
+    
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
 
     if (fs_walk(path)) {
         return FS_ERR_EXIST;
@@ -406,6 +443,11 @@ fs_status_t fs_create_file(const char *path) {
 }
 
 fs_status_t fs_write_file(const char *path, const void *data, size_t size) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;
@@ -427,6 +469,11 @@ fs_status_t fs_write_file(const char *path, const void *data, size_t size) {
 }
 
 fs_status_t fs_append_file(const char *path, const void *data, size_t size) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;
@@ -448,6 +495,11 @@ fs_status_t fs_append_file(const char *path, const void *data, size_t size) {
 }
 
 fs_status_t fs_read_file(const char *path, void *buffer, size_t buffer_size, size_t *out_size) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;
@@ -467,6 +519,11 @@ fs_status_t fs_read_file(const char *path, void *buffer, size_t buffer_size, siz
 }
 
 const uint8_t *fs_get_file_data(const char *path, size_t *out_size) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return NULL;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node || node->type != FS_NODE_FILE) {
         return NULL;
@@ -478,6 +535,11 @@ const uint8_t *fs_get_file_data(const char *path, size_t *out_size) {
 }
 
 fs_status_t fs_list_dir(const char *path, fs_list_callback_t callback, void *user_data) {
+    /* Validate path length (path can be NULL for current directory) */
+    if (path && !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;
@@ -501,6 +563,11 @@ fs_status_t fs_list_dir(const char *path, fs_list_callback_t callback, void *use
 }
 
 fs_status_t fs_change_dir(const char *path) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;
@@ -553,10 +620,19 @@ void fs_get_cwd(char *buffer, size_t buffer_size) {
 }
 
 int fs_exists(const char *path) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return 0;
+    }
     return fs_walk(path) != NULL;
 }
 
 int fs_is_dir(const char *path) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return 0;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return 0;
@@ -565,6 +641,11 @@ int fs_is_dir(const char *path) {
 }
 
 fs_status_t fs_remove(const char *path, int recursive) {
+    /* Validate path length */
+    if (!path || !fs_validate_path_length(path)) {
+        return FS_ERR_INVALID;
+    }
+    
     fs_node_t *node = fs_walk(path);
     if (!node) {
         return FS_ERR_NOENT;

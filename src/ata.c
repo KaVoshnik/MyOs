@@ -37,6 +37,7 @@ static uint64_t ata_total_sectors = 0;
 static char ata_model[41] = {0};
 static char ata_serial[21] = {0};
 static char ata_firmware[9] = {0};
+static ata_error_info_t ata_last_error = {ATA_ERR_NONE, 0, 0, 0, 0};
 
 static uint64_t ata_get_time_ms(void) {
     uint32_t freq = pit_current_frequency();
@@ -54,12 +55,18 @@ static int ata_wait_busy_clear(void) {
         status = inb(ATA_REG_STATUS);
         uint64_t elapsed = ata_get_time_ms() - start_time;
         if (elapsed > ATA_TIMEOUT_MS) {
-            return -2; /* Timeout */
+            ata_last_error.error_code = ATA_ERR_TIMEOUT;
+            ata_last_error.status_register = status;
+            return ATA_ERR_TIMEOUT;
         }
     } while (status & ATA_SR_BSY);
     
     if (status & (ATA_SR_ERR | ATA_SR_DF)) {
-        return -1; /* Error */
+        uint8_t error_reg = inb(ATA_REG_ERROR);
+        ata_last_error.error_code = ATA_ERR_DEVICE;
+        ata_last_error.status_register = status;
+        ata_last_error.error_register = error_reg;
+        return ATA_ERR_DEVICE;
     }
     return 0;
 }
@@ -71,11 +78,17 @@ static int ata_wait_drq(void) {
     do {
         status = inb(ATA_REG_STATUS);
         if (status & (ATA_SR_ERR | ATA_SR_DF)) {
-            return -1; /* Error */
+            uint8_t error_reg = inb(ATA_REG_ERROR);
+            ata_last_error.error_code = ATA_ERR_DEVICE;
+            ata_last_error.status_register = status;
+            ata_last_error.error_register = error_reg;
+            return ATA_ERR_DEVICE;
         }
         uint64_t elapsed = ata_get_time_ms() - start_time;
         if (elapsed > ATA_TIMEOUT_MS) {
-            return -2; /* Timeout */
+            ata_last_error.error_code = ATA_ERR_TIMEOUT;
+            ata_last_error.status_register = status;
+            return ATA_ERR_TIMEOUT;
         }
     } while (!(status & ATA_SR_DRQ));
     
@@ -107,6 +120,8 @@ void ata_init(void) {
     memset(ata_model, 0, sizeof(ata_model));
     memset(ata_serial, 0, sizeof(ata_serial));
     memset(ata_firmware, 0, sizeof(ata_firmware));
+    memset(&ata_last_error, 0, sizeof(ata_last_error));
+    ata_last_error.error_code = ATA_ERR_NONE;
     
     outb(ATA_REG_CONTROL, 0x00);
     ata_select_drive(0);
@@ -185,8 +200,18 @@ int ata_is_available(void) {
 }
 
 static int ata_transfer(uint32_t lba, uint16_t sector_count, void *buffer, int write) {
-    if (!ata_present || sector_count == 0 || buffer == NULL) {
-        return -1;
+    if (!ata_present) {
+        ata_last_error.error_code = ATA_ERR_NOT_AVAILABLE;
+        ata_last_error.lba = lba;
+        ata_last_error.sector_count = sector_count;
+        return ATA_ERR_NOT_AVAILABLE;
+    }
+    
+    if (sector_count == 0 || buffer == NULL) {
+        ata_last_error.error_code = ATA_ERR_INVALID_PARAM;
+        ata_last_error.lba = lba;
+        ata_last_error.sector_count = sector_count;
+        return ATA_ERR_INVALID_PARAM;
     }
 
     uint32_t remaining = sector_count;
@@ -206,13 +231,31 @@ static int ata_transfer(uint32_t lba, uint16_t sector_count, void *buffer, int w
         uint16_t sectors_to_process = (chunk == 256) ? 256 : chunk;
         for (uint16_t i = 0; i < sectors_to_process; ++i) {
             if (write) {
-                if (ata_wait_busy_clear() != 0 || ata_wait_drq() != 0) {
-                    return -1;
+                int wait_result = ata_wait_busy_clear();
+                if (wait_result != 0) {
+                    ata_last_error.lba = lba + i;
+                    ata_last_error.sector_count = sectors_to_process - i;
+                    return wait_result;
+                }
+                wait_result = ata_wait_drq();
+                if (wait_result != 0) {
+                    ata_last_error.lba = lba + i;
+                    ata_last_error.sector_count = sectors_to_process - i;
+                    return wait_result;
                 }
                 outsw(ATA_REG_DATA, byte_buffer, 256);
             } else {
-                if (ata_wait_busy_clear() != 0 || ata_wait_drq() != 0) {
-                    return -1;
+                int wait_result = ata_wait_busy_clear();
+                if (wait_result != 0) {
+                    ata_last_error.lba = lba + i;
+                    ata_last_error.sector_count = sectors_to_process - i;
+                    return wait_result;
+                }
+                wait_result = ata_wait_drq();
+                if (wait_result != 0) {
+                    ata_last_error.lba = lba + i;
+                    ata_last_error.sector_count = sectors_to_process - i;
+                    return wait_result;
                 }
                 insw(ATA_REG_DATA, byte_buffer, 256);
             }
@@ -221,13 +264,19 @@ static int ata_transfer(uint32_t lba, uint16_t sector_count, void *buffer, int w
 
         if (write) {
             outb(ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
-            ata_wait_busy_clear();
+            int flush_result = ata_wait_busy_clear();
+            if (flush_result != 0) {
+                ata_last_error.lba = lba;
+                ata_last_error.sector_count = sectors_to_process;
+                return flush_result;
+            }
         }
 
         lba += sectors_to_process;
         remaining -= sectors_to_process;
     }
 
+    ata_last_error.error_code = ATA_ERR_NONE;
     return 0;
 }
 
@@ -260,6 +309,37 @@ int ata_get_last_error(void) {
         return -1;
     }
     return (int)inb(ATA_REG_ERROR);
+}
+
+ata_error_t ata_get_last_error_code(void) {
+    return ata_last_error.error_code;
+}
+
+const ata_error_info_t *ata_get_last_error_info(void) {
+    return &ata_last_error;
+}
+
+const char *ata_error_string(ata_error_t error) {
+    switch (error) {
+        case ATA_ERR_NONE:
+            return "No error";
+        case ATA_ERR_TIMEOUT:
+            return "Operation timed out";
+        case ATA_ERR_DEVICE:
+            return "Device error";
+        case ATA_ERR_INVALID_PARAM:
+            return "Invalid parameters";
+        case ATA_ERR_NOT_AVAILABLE:
+            return "ATA device not available";
+        case ATA_ERR_WRITE_PROTECTED:
+            return "Write protected";
+        case ATA_ERR_BAD_SECTOR:
+            return "Bad sector";
+        case ATA_ERR_ABORT:
+            return "Operation aborted";
+        default:
+            return "Unknown error";
+    }
 }
 
 
