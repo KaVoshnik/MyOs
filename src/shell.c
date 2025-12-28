@@ -172,6 +172,7 @@ static void shell_cmd_help(void) {
     terminal_write_line("  threads    - list all kernel threads");
     terminal_write_line("  spawn TEXT - start background thread printing TEXT");
     terminal_write_line("  ansi       - test ANSI escape sequences");
+    terminal_write_line("  myfetch    - display system information with logo");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
     terminal_write_line("");
@@ -968,6 +969,135 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
+static void shell_cmd_myfetch(void) {
+    /* ASCII art logo with ⌘ symbol */
+    terminal_write("\x1B[1;36m");  /* Bold cyan color */
+    terminal_write_line("     ╔═══════════╗");
+    terminal_write_line("    ║             ║");
+    terminal_write_line("   ║               ║");
+    terminal_write_line("  ║                 ║");
+    terminal_write_line(" ║        ⌘        ║");
+    terminal_write_line("  ║                 ║");
+    terminal_write_line("   ║               ║");
+    terminal_write_line("    ║             ║");
+    terminal_write_line("     ╚═══════════╝");
+    terminal_write("\x1B[0m");  /* Reset color */
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write("OS:        ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[32m");  /* Green */
+    terminal_write_line("MyOs");
+    
+    terminal_write("\x1B[1;36m");
+    terminal_write("Version:   ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[33m");  /* Yellow */
+    terminal_write_line("1.0.0");
+    
+    /* Uptime */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Uptime:    ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[35m");  /* Magenta */
+    uint64_t seconds = pit_seconds();
+    struct {
+        uint64_t unit_seconds;
+        const char *singular;
+        const char *plural;
+    } units[] = {
+        { 24ULL * 60ULL * 60ULL, "day", "days" },
+        { 60ULL * 60ULL, "hour", "hours" },
+        { 60ULL, "min", "mins" },
+        { 1ULL, "sec", "secs" }
+    };
+    int printed = 0;
+    for (size_t i = 0; i < sizeof(units) / sizeof(units[0]); ++i) {
+        if (seconds >= units[i].unit_seconds) {
+            uint64_t value = seconds / units[i].unit_seconds;
+            seconds %= units[i].unit_seconds;
+            if (printed) {
+                terminal_write(", ");
+            }
+            print_uint64(value);
+            terminal_write(" ");
+            terminal_write(value == 1 ? units[i].singular : units[i].plural);
+            printed = 1;
+        }
+    }
+    if (!printed) {
+        terminal_write("0 secs");
+    }
+    terminal_write_line("");
+    
+    /* Memory */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Memory:    ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[34m");  /* Blue */
+    size_t used = memory_bytes_used();
+    size_t total = memory_heap_size();
+    print_uint64(used / 1024);
+    terminal_write(" KiB / ");
+    print_uint64(total / 1024);
+    terminal_write(" KiB (");
+    if (total > 0) {
+        uint64_t percent = (used * 100) / total;
+        print_uint64(percent);
+    } else {
+        terminal_write("0");
+    }
+    terminal_write_line("%)");
+    
+    /* Threads */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Threads:   ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[31m");  /* Red */
+    thread_snapshot_t snapshots[SHELL_THREAD_SNAPSHOT_MAX];
+    size_t thread_count = thread_snapshot_list(snapshots, SHELL_THREAD_SNAPSHOT_MAX);
+    print_uint64(thread_count);
+    terminal_write_line(" active");
+    
+    /* Disk */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Disk:      ");
+    terminal_write("\x1B[0m");
+    if (ata_is_available()) {
+        terminal_write("\x1B[32m");  /* Green */
+        uint64_t total_sectors = ata_get_total_sectors();
+        uint64_t total_mb = (total_sectors * 512) / (1024 * 1024);
+        print_uint64(total_mb);
+        terminal_write_line(" MB available");
+    } else {
+        terminal_write("\x1B[33m");  /* Yellow */
+        terminal_write_line("Not available");
+    }
+    
+    /* Filesystem */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Filesystem:");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[36m");  /* Cyan */
+    if (fs_persistence_available()) {
+        terminal_write_line("Persistent (ATA disk attached)");
+    } else {
+        terminal_write_line("In-memory only");
+    }
+    
+    /* Current directory */
+    terminal_write("\x1B[1;36m");
+    terminal_write("Directory: ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[37m");  /* White */
+    char path[FS_MAX_PATH_LEN];
+    fs_get_cwd(path, sizeof(path));
+    terminal_write_line(path);
+    
+    terminal_write("\x1B[0m");  /* Reset color */
+}
+
 static void shell_cmd_hexdump(const char *args) {
     char file_path[FS_MAX_PATH_LEN];
     shell_extract_token(args, file_path, sizeof(file_path));
@@ -1467,6 +1597,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "myfetch")) != NULL) {
+        (void)args;
+        shell_cmd_myfetch();
+        return;
+    }
+
     if ((args = shell_match_command(line, "poweroff")) != NULL) {
         (void)args;
         shell_cmd_poweroff();
@@ -1488,7 +1624,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "spawn", "ansi",
-    "poweroff", "reboot", NULL
+    "myfetch", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
