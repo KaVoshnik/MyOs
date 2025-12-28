@@ -71,6 +71,44 @@ static void coalesce(block_header_t *block) {
     }
 }
 
+/* Find the block header for a given pointer.
+ * Returns NULL if the pointer is invalid.
+ * Handles both regular and aligned allocations.
+ */
+static block_header_t *memory_find_block_header(void *ptr) {
+    if (ptr == NULL || heap_start == NULL) {
+        return NULL;
+    }
+    
+    /* First, try regular allocation (block header right before ptr) */
+    block_header_t *regular_block = (block_header_t *)((uintptr_t)ptr - sizeof(block_header_t));
+    
+    /* Check if this is a valid regular allocation */
+    if (regular_block >= heap_start && 
+        (uintptr_t)regular_block < (uintptr_t)heap_start + heap_size &&
+        (uintptr_t)ptr == (uintptr_t)regular_block + sizeof(block_header_t) &&
+        !regular_block->free &&
+        (uintptr_t)ptr < (uintptr_t)regular_block + sizeof(block_header_t) + regular_block->size) {
+        return regular_block;
+    }
+    
+    /* Not a regular allocation, check for aligned allocation */
+    if ((uintptr_t)ptr >= sizeof(uintptr_t)) {
+        uintptr_t stored_ptr = *((uintptr_t *)((uintptr_t)ptr - sizeof(uintptr_t)));
+        block_header_t *aligned_block = (block_header_t *)stored_ptr;
+        
+        if (aligned_block >= heap_start && 
+            (uintptr_t)aligned_block < (uintptr_t)heap_start + heap_size &&
+            (uintptr_t)ptr >= (uintptr_t)aligned_block + sizeof(block_header_t) &&
+            (uintptr_t)ptr < (uintptr_t)aligned_block + sizeof(block_header_t) + aligned_block->size &&
+            !aligned_block->free) {
+            return aligned_block;
+        }
+    }
+    
+    return NULL;
+}
+
 void memory_init(uintptr_t heap_start_addr, size_t size) {
     heap_start = (block_header_t *)heap_start_addr;
     heap_size = size;
@@ -140,34 +178,7 @@ void kfree(void *ptr) {
         return;
     }
     
-    block_header_t *block = NULL;
-    
-    /* First, try regular allocation (block header right before ptr) */
-    block_header_t *regular_block = (block_header_t *)((uintptr_t)ptr - sizeof(block_header_t));
-    
-    /* Check if this is a valid regular allocation */
-    if (regular_block >= heap_start && 
-        (uintptr_t)regular_block < (uintptr_t)heap_start + heap_size &&
-        (uintptr_t)ptr == (uintptr_t)regular_block + sizeof(block_header_t) &&
-        !regular_block->free &&
-        (uintptr_t)ptr < (uintptr_t)regular_block + sizeof(block_header_t) + regular_block->size) {
-        block = regular_block;
-    } else {
-        /* Not a regular allocation, check for aligned allocation */
-        if ((uintptr_t)ptr >= sizeof(uintptr_t)) {
-            uintptr_t stored_ptr = *((uintptr_t *)((uintptr_t)ptr - sizeof(uintptr_t)));
-            block_header_t *aligned_block = (block_header_t *)stored_ptr;
-            
-            if (aligned_block >= heap_start && 
-                (uintptr_t)aligned_block < (uintptr_t)heap_start + heap_size &&
-                (uintptr_t)ptr >= (uintptr_t)aligned_block + sizeof(block_header_t) &&
-                (uintptr_t)ptr < (uintptr_t)aligned_block + sizeof(block_header_t) + aligned_block->size &&
-                !aligned_block->free) {
-                block = aligned_block;
-            }
-        }
-    }
-    
+    block_header_t *block = memory_find_block_header(ptr);
     if (block == NULL) {
         return; /* Invalid pointer */
     }
@@ -219,30 +230,7 @@ void *realloc(void *ptr, size_t new_size) {
     }
     
     /* Get the original block */
-    block_header_t *block = NULL;
-    block_header_t *regular_block = (block_header_t *)((uintptr_t)ptr - sizeof(block_header_t));
-    
-    if (regular_block >= heap_start && 
-        (uintptr_t)regular_block < (uintptr_t)heap_start + heap_size &&
-        (uintptr_t)ptr == (uintptr_t)regular_block + sizeof(block_header_t) &&
-        !regular_block->free &&
-        (uintptr_t)ptr < (uintptr_t)regular_block + sizeof(block_header_t) + regular_block->size) {
-        block = regular_block;
-    } else {
-        if ((uintptr_t)ptr >= sizeof(uintptr_t)) {
-            uintptr_t stored_ptr = *((uintptr_t *)((uintptr_t)ptr - sizeof(uintptr_t)));
-            block_header_t *aligned_block = (block_header_t *)stored_ptr;
-            
-            if (aligned_block >= heap_start && 
-                (uintptr_t)aligned_block < (uintptr_t)heap_start + heap_size &&
-                (uintptr_t)ptr >= (uintptr_t)aligned_block + sizeof(block_header_t) &&
-                (uintptr_t)ptr < (uintptr_t)aligned_block + sizeof(block_header_t) + aligned_block->size &&
-                !aligned_block->free) {
-                block = aligned_block;
-            }
-        }
-    }
-    
+    block_header_t *block = memory_find_block_header(ptr);
     if (block == NULL) {
         return NULL; /* Invalid pointer */
     }
