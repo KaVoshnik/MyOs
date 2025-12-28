@@ -14,7 +14,7 @@ static process_t *process_alloc_slot(void);
 static process_t *process_find(uint64_t pid);
 static void process_detach_from_parent(process_t *proc);
 static void process_attach_to_parent(process_t *parent, process_t *child);
-static void process_cleanup_zombies(void);
+/* Reserved for future zombie cleanup implementation */
 
 static int interrupts_save_and_disable(void) {
     uint64_t flags;
@@ -188,13 +188,16 @@ uint64_t process_fork(void) {
 }
 
 int process_exec(const char *name, thread_entry_t entry, void *arg) {
-    if (!current_process || !entry) {
+    (void)entry;  /* Reserved for future implementation */
+    (void)arg;    /* Reserved for future implementation */
+    
+    if (!current_process) {
         return -1;
     }
     
     int was_enabled = interrupts_save_and_disable();
     
-    /* Update process name and entry point */
+    /* Update process name */
     if (name && name[0] != '\0') {
         strncpy(current_process->name, name, PROCESS_NAME_MAX - 1);
         current_process->name[PROCESS_NAME_MAX - 1] = '\0';
