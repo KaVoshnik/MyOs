@@ -9,6 +9,7 @@
 #include <ata.h>
 #include <thread.h>
 #include <process.h>
+#include <user.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -132,6 +133,16 @@ static void shell_print_fs_error(fs_status_t status) {
 static void shell_print_prompt(void) {
     char prompt_path[FS_MAX_PATH_LEN];
     shell_build_prompt_path(prompt_path, sizeof(prompt_path));
+    
+    /* Show username if logged in */
+    const char *username = user_get_current_username();
+    if (username) {
+        terminal_set_color(TERMINAL_COLOR_LIGHT_MAGENTA, TERMINAL_COLOR_BLACK);
+        terminal_write(username);
+        terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
+        terminal_write("@");
+    }
+    
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
     terminal_write("myos ");
     terminal_set_color(TERMINAL_COLOR_LIGHT_CYAN, TERMINAL_COLOR_BLACK);
@@ -176,6 +187,10 @@ static void shell_cmd_help(void) {
     terminal_write_line("  spawn TEXT - start background process printing TEXT");
     terminal_write_line("  ansi       - test ANSI escape sequences");
     terminal_write_line("  myfetch    - display system information with logo");
+    terminal_write_line("  whoami     - show current username");
+    terminal_write_line("  logout     - logout from current session");
+    terminal_write_line("  useradd USERNAME - create new user (admin only)");
+    terminal_write_line("  passwd     - change password");
     terminal_write_line("  poweroff   - shut down the system");
     terminal_write_line("  reboot     - restart the system");
     terminal_write_line("");
@@ -1356,6 +1371,186 @@ static void shell_spawn_worker(void *arg) {
     process_exit(0);
 }
 
+static void shell_cmd_whoami(void) {
+    const char *username = user_get_current_username();
+    if (username) {
+        terminal_write_line(username);
+    } else {
+        terminal_write_line("Not logged in.");
+    }
+}
+
+static void shell_cmd_logout(void) {
+    user_logout();
+    terminal_write_line("Logged out. Please login again.");
+    terminal_write_line("System will halt. Restart to login.");
+    for (;;) {
+        __asm__ volatile("cli; hlt");
+    }
+}
+
+static void read_password_silent(char *buffer, size_t buffer_size) {
+    size_t pos = 0;
+    buffer[0] = '\0';
+    
+    while (1) {
+        uint16_t code;
+        while (!keyboard_try_read_char_extended(&code)) {
+            __asm__ volatile("hlt");
+        }
+        
+        if (code < 256) {
+            char c = (char)code;
+            
+            if (c == '\r' || c == '\n') {
+                terminal_write_line("");
+                buffer[pos] = '\0';
+                return;
+            }
+            
+            if (c == '\b') {
+                if (pos > 0) {
+                    pos--;
+                    buffer[pos] = '\0';
+                    terminal_write("\b \b");
+                }
+                continue;
+            }
+            
+            if (pos < buffer_size - 1 && c >= 32 && c < 127) {
+                buffer[pos++] = c;
+                buffer[pos] = '\0';
+                terminal_write("*");
+            }
+        }
+    }
+}
+
+static void shell_cmd_useradd(const char *args) {
+    if (!user_is_admin()) {
+        terminal_write_line("useradd: permission denied (admin only).");
+        return;
+    }
+    
+    const char *username = shell_skip_spaces(args);
+    if (!username || *username == '\0') {
+        terminal_write_line("Usage: useradd <username>");
+        return;
+    }
+    
+    if (strlen(username) < 3) {
+        terminal_write_line("useradd: username must be at least 3 characters.");
+        return;
+    }
+    
+    if (user_find_by_name(username) != NULL) {
+        terminal_write_line("useradd: user already exists.");
+        return;
+    }
+    
+    terminal_write("Enter password for ");
+    terminal_write(username);
+    terminal_write(": ");
+    
+    char password[64];
+    read_password_silent(password, sizeof(password));
+    
+    if (strlen(password) < 4) {
+        terminal_write_line("useradd: password must be at least 4 characters.");
+        return;
+    }
+    
+    terminal_write("Confirm password: ");
+    char password_confirm[64];
+    read_password_silent(password_confirm, sizeof(password_confirm));
+    
+    if (strcmp(password, password_confirm) != 0) {
+        terminal_write_line("useradd: passwords do not match.");
+        return;
+    }
+    
+    int is_admin = 0; /* Regular user by default */
+    int result = user_create(username, password, is_admin);
+    
+    if (result == 0) {
+        terminal_write("\x1B[32m");  /* Green */
+        terminal_write("User '");
+        terminal_write(username);
+        terminal_write_line("' created successfully.");
+        terminal_write("\x1B[0m");
+    } else if (result == -2) {
+        terminal_write_line("useradd: user already exists.");
+    } else {
+        terminal_write_line("useradd: failed to create user.");
+    }
+}
+
+static void shell_cmd_passwd(const char *args) {
+    const char *target_username = shell_skip_spaces(args);
+    const char *current_username = user_get_current_username();
+    
+    if (!current_username) {
+        terminal_write_line("passwd: not logged in.");
+        return;
+    }
+    
+    /* If no username specified, change own password */
+    if (!target_username || *target_username == '\0') {
+        target_username = current_username;
+    }
+    
+    /* Check permissions */
+    if (strcmp(target_username, current_username) != 0 && !user_is_admin()) {
+        terminal_write_line("passwd: permission denied (can only change own password).");
+        return;
+    }
+    
+    user_t *target_user = user_find_by_name(target_username);
+    if (!target_user) {
+        terminal_write_line("passwd: user not found.");
+        return;
+    }
+    
+    terminal_write("Enter current password: ");
+    char current_password[64];
+    read_password_silent(current_password, sizeof(current_password));
+    
+    if (!password_verify(current_password, target_user->password_hash)) {
+        terminal_write_line("passwd: incorrect password.");
+        return;
+    }
+    
+    terminal_write("Enter new password: ");
+    char new_password[64];
+    read_password_silent(new_password, sizeof(new_password));
+    
+    if (strlen(new_password) < 4) {
+        terminal_write_line("passwd: password must be at least 4 characters.");
+        return;
+    }
+    
+    terminal_write("Confirm new password: ");
+    char new_password_confirm[64];
+    read_password_silent(new_password_confirm, sizeof(new_password_confirm));
+    
+    if (strcmp(new_password, new_password_confirm) != 0) {
+        terminal_write_line("passwd: passwords do not match.");
+        return;
+    }
+    
+    /* Update password */
+    password_hash(new_password, target_user->password_hash, sizeof(target_user->password_hash));
+    
+    /* Save users */
+    user_system_save_users();
+    
+    terminal_write("\x1B[32m");  /* Green */
+    terminal_write("Password changed for ");
+    terminal_write(target_username);
+    terminal_write_line(".");
+    terminal_write("\x1B[0m");
+}
+
 static void shell_cmd_spawn(const char *args) {
     const char *text = shell_skip_spaces(args);
     if (!text || *text == '\0') {
@@ -1749,6 +1944,28 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "whoami")) != NULL) {
+        (void)args;
+        shell_cmd_whoami();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "logout")) != NULL) {
+        (void)args;
+        shell_cmd_logout();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "useradd")) != NULL) {
+        shell_cmd_useradd(args);
+        return;
+    }
+
+    if ((args = shell_match_command(line, "passwd")) != NULL) {
+        shell_cmd_passwd(args);
+        return;
+    }
+
     if ((args = shell_match_command(line, "poweroff")) != NULL) {
         (void)args;
         shell_cmd_poweroff();
@@ -1770,7 +1987,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "myfetch", "poweroff", "reboot", NULL
+    "spawn", "ansi", "myfetch", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
