@@ -100,31 +100,34 @@ static const char *shell_extract_token(const char *input, char *buffer, size_t b
 }
 
 static void shell_print_fs_error(fs_status_t status) {
+    terminal_write("\x1B[1;31m");  /* Bold red */
+    terminal_write("[ERROR] ");
+    terminal_write("\x1B[0m");
     terminal_write("\x1B[31m");  /* Red color */
     switch (status) {
         case FS_ERR_NOENT:
-            terminal_write_line("Filesystem error: path not found.");
+            terminal_write_line("Path not found.");
             break;
         case FS_ERR_EXIST:
-            terminal_write_line("Filesystem error: already exists.");
+            terminal_write_line("Already exists.");
             break;
         case FS_ERR_NOTDIR:
-            terminal_write_line("Filesystem error: not a directory.");
+            terminal_write_line("Not a directory.");
             break;
         case FS_ERR_ISDIR:
-            terminal_write_line("Filesystem error: path is a directory.");
+            terminal_write_line("Path is a directory.");
             break;
         case FS_ERR_NOMEM:
-            terminal_write_line("Filesystem error: out of memory.");
+            terminal_write_line("Out of memory.");
             break;
         case FS_ERR_INVALID:
-            terminal_write_line("Filesystem error: invalid path.");
+            terminal_write_line("Invalid path.");
             break;
         case FS_ERR_NOTEMPTY:
-            terminal_write_line("Filesystem error: directory not empty.");
+            terminal_write_line("Directory not empty.");
             break;
         default:
-            terminal_write_line("Filesystem error: unknown.");
+            terminal_write_line("Unknown error.");
             break;
     }
     terminal_write("\x1B[0m");  /* Reset color */
@@ -144,62 +147,187 @@ static void shell_print_prompt(void) {
     }
     
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
-    terminal_write("myos ");
+    terminal_write("myos");
+    terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
+    terminal_write(":");
     terminal_set_color(TERMINAL_COLOR_LIGHT_CYAN, TERMINAL_COLOR_BLACK);
     terminal_write(prompt_path);
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
-    terminal_write("> ");
+    terminal_write(" $ ");
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
 }
 
 static void shell_cmd_help(void) {
-    terminal_write_line("Commands:");
-    terminal_write_line("  help       - show this list");
-    terminal_write_line("  clear      - clear the screen");
-    terminal_write_line("  uptime     - show time since boot");
-    terminal_write_line("  mem        - show heap usage");
-    terminal_write_line("  testmem    - test memory allocator");
-    terminal_write_line("  history    - list recent commands");
-    terminal_write_line("  echo TEXT  - print TEXT");
-    terminal_write_line("  pwd        - show current directory");
-    terminal_write_line("  ls [PATH]  - list directory contents");
-    terminal_write_line("  cd PATH    - change directory");
-    terminal_write_line("  touch PATH - create/truncate a file");
-    terminal_write_line("  cat PATH   - print file contents");
-    terminal_write_line("  write PATH DATA  - overwrite file with DATA");
-    terminal_write_line("  append PATH DATA - append DATA to file");
-    terminal_write_line("  mkdir PATH - create directory");
-    terminal_write_line("  rm [-r] PATH - remove file or directory");
-    terminal_write_line("  savefs     - persist filesystem to disk");
-    terminal_write_line("  loadfs     - reload filesystem from disk");
-    terminal_write_line("  diskinfo   - show ATA disk information");
-    terminal_write_line("  cp SRC DEST - copy file");
-    terminal_write_line("  mv SRC DEST - move/rename file");
-    terminal_write_line("  find [PATH] PATTERN - find files by name pattern");
-    terminal_write_line("  grep PATTERN FILE - search for pattern in file");
-    terminal_write_line("  head [FILE] [LINES] - show first lines of file");
-    terminal_write_line("  tail [FILE] [LINES] - show last lines of file");
-    terminal_write_line("  wc FILE - count lines, words, characters");
-    terminal_write_line("  hexdump FILE - show file in hexadecimal");
-    terminal_write_line("  threads    - list all kernel threads");
-    terminal_write_line("  ps         - show detailed process information");
-    terminal_write_line("  kill PID   - kill a process by PID");
-    terminal_write_line("  spawn TEXT - start background process printing TEXT");
-    terminal_write_line("  ansi       - test ANSI escape sequences");
-    terminal_write_line("  myfetch    - display system information with logo");
-    terminal_write_line("  whoami     - show current username");
-    terminal_write_line("  logout     - logout from current session");
-    terminal_write_line("  useradd USERNAME - create new user (admin only)");
-    terminal_write_line("  passwd     - change password");
-    terminal_write_line("  poweroff   - shut down the system");
-    terminal_write_line("  reboot     - restart the system");
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write_line("=== MyOs Shell Commands ===");
+    terminal_write("\x1B[0m");
     terminal_write_line("");
-    terminal_write_line("Shell features:");
-    terminal_write_line("  Up/Down    - navigate command history");
-    terminal_write_line("  Left/Right - move cursor in line");
-    terminal_write_line("  Tab        - autocomplete commands");
-    terminal_write_line("  Ctrl+R     - search history");
-    terminal_write_line("  Autosave   - snapshot every minute when disk is attached");
+    
+    terminal_write("\x1B[1;33m");  /* Bold yellow */
+    terminal_write_line("System:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mhelp\x1B[0m       - show this list");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mclear\x1B[0m      - clear the screen");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32muptime\x1B[0m     - show time since boot");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmem\x1B[0m        - show heap usage");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mtestmem\x1B[0m    - test memory allocator");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mhistory\x1B[0m    - list recent commands");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mpoweroff\x1B[0m   - shut down the system");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mreboot\x1B[0m     - restart the system");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Filesystem:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mpwd\x1B[0m        - show current directory");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mls [PATH]\x1B[0m  - list directory contents");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mcd PATH\x1B[0m    - change directory");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mtouch PATH\x1B[0m - create/truncate a file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mcat PATH\x1B[0m   - print file contents");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mwrite PATH DATA\x1B[0m  - overwrite file with DATA");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mappend PATH DATA\x1B[0m - append DATA to file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmkdir PATH\x1B[0m - create directory");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mrm [-r] PATH\x1B[0m - remove file or directory");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mcp SRC DEST\x1B[0m - copy file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmv SRC DEST\x1B[0m - move/rename file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32msavefs\x1B[0m     - persist filesystem to disk");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mloadfs\x1B[0m     - reload filesystem from disk");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Text Processing:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mecho TEXT\x1B[0m  - print TEXT");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mfind [PATH] PATTERN\x1B[0m - find files by name pattern");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mgrep PATTERN FILE\x1B[0m - search for pattern in file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mhead [FILE] [LINES]\x1B[0m - show first lines of file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mtail [FILE] [LINES]\x1B[0m - show last lines of file");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mwc FILE\x1B[0m - count lines, words, characters");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mhexdump FILE\x1B[0m - show file in hexadecimal");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Processes & Threads:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mthreads\x1B[0m    - list all kernel threads");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mps\x1B[0m         - show detailed process information");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mkill PID\x1B[0m   - kill a process by PID");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mspawn TEXT\x1B[0m - start background process printing TEXT");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Users & Security:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mwhoami\x1B[0m     - show current username");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mlogout\x1B[0m     - logout from current session");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32museradd USERNAME\x1B[0m - create new user (admin only)");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mpasswd\x1B[0m     - change password");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("System Info:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mdiskinfo\x1B[0m   - show ATA disk information");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmyfetch\x1B[0m    - display system information with logo");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mansi\x1B[0m       - test ANSI escape sequences");
+    terminal_write_line("");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Shell Features:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[36mUp/Down\x1B[0m    - navigate command history");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[36mLeft/Right\x1B[0m - move cursor in line");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[36mTab\x1B[0m        - autocomplete commands");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[36mCtrl+R\x1B[0m     - search history");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[36mAutosave\x1B[0m   - snapshot every minute when disk is attached");
+    terminal_write_line("");
 }
 
 static void shell_cmd_clear(void) {
@@ -212,30 +340,43 @@ static void shell_cmd_uptime(void) {
         uint64_t unit_seconds;
         const char *singular;
         const char *plural;
+        const char *icon;
     } units[] = {
-        { 24ULL * 60ULL * 60ULL, "day", "days" },
-        { 60ULL * 60ULL, "hour", "hours" },
-        { 60ULL, "min", "mins" },
-        { 1ULL, "sec", "secs" }
+        { 24ULL * 60ULL * 60ULL, "day", "days", "d" },
+        { 60ULL * 60ULL, "hour", "hours", "h" },
+        { 60ULL, "min", "mins", "m" },
+        { 1ULL, "sec", "secs", "s" }
     };
 
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
     terminal_write("Uptime: ");
+    terminal_write("\x1B[0m");
     int printed = 0;
     for (size_t i = 0; i < sizeof(units) / sizeof(units[0]); ++i) {
         if (seconds >= units[i].unit_seconds) {
             uint64_t value = seconds / units[i].unit_seconds;
             seconds %= units[i].unit_seconds;
             if (printed) {
+                terminal_write("\x1B[90m");  /* Dark grey */
                 terminal_write(", ");
+                terminal_write("\x1B[0m");
             }
+            terminal_write("\x1B[33m");  /* Yellow */
             print_uint64(value);
-            terminal_write(" ");
-            terminal_write(value == 1 ? units[i].singular : units[i].plural);
+            terminal_write("\x1B[0m");
+            terminal_write("\x1B[90m");
+            terminal_write(units[i].icon);
+            terminal_write("\x1B[0m");
             printed = 1;
         }
     }
     if (!printed) {
-        terminal_write("0 secs");
+        terminal_write("\x1B[33m");
+        terminal_write("0");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[90m");
+        terminal_write("s");
+        terminal_write("\x1B[0m");
     }
     terminal_write_line("");
 }
@@ -248,37 +389,68 @@ static void shell_cmd_mem(void) {
     size_t free_blocks = memory_free_blocks_count();
     size_t largest_free = memory_largest_free_block();
     
-    terminal_write("Heap total:      ");
-    print_uint64(total);
-    terminal_write_line(" bytes");
-    terminal_write("Heap used:       ");
-    print_uint64(used);
-    terminal_write_line(" bytes");
-    terminal_write("Heap free:       ");
-    print_uint64(free);
-    terminal_write_line(" bytes");
-    terminal_write("Total blocks:    ");
-    print_uint64(blocks);
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write("Memory Statistics");
+    terminal_write("\x1B[0m");
     terminal_write_line("");
-    terminal_write("Free blocks:     ");
-    print_uint64(free_blocks);
     terminal_write_line("");
-    terminal_write("Largest free:    ");
-    print_uint64(largest_free);
-    terminal_write_line(" bytes");
     
-    if (blocks > 0) {
-        size_t used_blocks = blocks - free_blocks;
-        terminal_write("Fragmentation:   ");
-        if (free_blocks > 0 && used_blocks > 0) {
-            print_uint64(free_blocks);
-            terminal_write(" free blocks, ");
-            print_uint64(used_blocks);
-            terminal_write_line(" used blocks");
-        } else {
-            terminal_write_line("none");
-        }
+    terminal_write("\x1B[36mTotal:\x1B[0m      ");
+    terminal_write("\x1B[33m");
+    print_uint64(total);
+    terminal_write("\x1B[0m");
+    terminal_write(" bytes");
+    terminal_write_line("");
+    
+    terminal_write("\x1B[32mUsed:\x1B[0m       ");
+    terminal_write("\x1B[33m");
+    print_uint64(used);
+    terminal_write("\x1B[0m");
+    terminal_write(" bytes");
+    if (total > 0) {
+        uint64_t percent = (used * 100) / total;
+        terminal_write(" (");
+        terminal_write("\x1B[31m");
+        print_uint64(percent);
+        terminal_write("\x1B[0m");
+        terminal_write("%)");
     }
+    terminal_write_line("");
+    
+    terminal_write("\x1B[32mFree:\x1B[0m       ");
+    terminal_write("\x1B[33m");
+    print_uint64(free);
+    terminal_write("\x1B[0m");
+    terminal_write(" bytes");
+    if (total > 0) {
+        uint64_t percent = (free * 100) / total;
+        terminal_write(" (");
+        terminal_write("\x1B[32m");
+        print_uint64(percent);
+        terminal_write("\x1B[0m");
+        terminal_write("%)");
+    }
+    terminal_write_line("");
+    
+    terminal_write("\x1B[36mBlocks:\x1B[0m     ");
+    terminal_write("\x1B[33m");
+    print_uint64(blocks);
+    terminal_write("\x1B[0m");
+    terminal_write(" total, ");
+    terminal_write("\x1B[32m");
+    print_uint64(free_blocks);
+    terminal_write("\x1B[0m");
+    terminal_write(" free, ");
+    terminal_write("\x1B[31m");
+    print_uint64(blocks - free_blocks);
+    terminal_write("\x1B[0m");
+    terminal_write_line(" used");
+    
+    terminal_write("\x1B[36mLargest free:\x1B[0m ");
+    terminal_write("\x1B[33m");
+    print_uint64(largest_free);
+    terminal_write("\x1B[0m");
+    terminal_write_line(" bytes");
 }
 
 static void shell_cmd_echo(const char *args) {
@@ -298,18 +470,29 @@ static void shell_cmd_pwd(void) {
 static void shell_ls_callback(const fs_dir_entry_t *entry, void *user_data) {
     (void)user_data;
     if (entry->is_directory) {
-        terminal_write("\x1B[34m[DIR]\x1B[0m ");  /* Blue for directories */
         terminal_write("\x1B[1;34m");  /* Bold blue */
+        terminal_write("d ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[1;36m");  /* Bold cyan */
         terminal_write(entry->name);
         terminal_write("\x1B[0m");
+        terminal_write("\x1B[90m");  /* Dark grey */
+        terminal_write("/");
+        terminal_write("\x1B[0m");
     } else {
-        terminal_write("      ");
+        terminal_write("\x1B[32m");  /* Green */
+        terminal_write("- ");
+        terminal_write("\x1B[0m");
         terminal_write("\x1B[32m");  /* Green for files */
         terminal_write(entry->name);
         terminal_write("\x1B[0m");
-        terminal_write("  ");
+        terminal_write("\x1B[90m");  /* Dark grey */
+        terminal_write("  (");
+        terminal_write("\x1B[0m");
         print_uint64(entry->size);
-        terminal_write(" bytes");
+        terminal_write("\x1B[90m");
+        terminal_write(" bytes)");
+        terminal_write("\x1B[0m");
     }
     terminal_write_line("");
 }
@@ -361,6 +544,14 @@ static void shell_cmd_touch(const char *args) {
     }
     if (status != FS_OK) {
         shell_print_fs_error(status);
+    } else {
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("File created/updated.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     }
 }
 
@@ -374,6 +565,14 @@ static void shell_cmd_mkdir(const char *args) {
     fs_status_t status = fs_mkdir(path);
     if (status != FS_OK) {
         shell_print_fs_error(status);
+    } else {
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("Directory created.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     }
 }
 
@@ -395,21 +594,36 @@ static void shell_cmd_rm(const char *args) {
     fs_status_t status = fs_remove(token, recursive);
     if (status != FS_OK) {
         shell_print_fs_error(status);
+    } else {
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("Removed successfully.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     }
 }
 
 static void shell_cmd_savefs(void) {
     if (!fs_persistence_available()) {
-        terminal_write("\x1B[33m");  /* Yellow warning */
+        terminal_write("\x1B[1;33m");  /* Bold yellow warning */
+        terminal_write("[WARNING] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[33m");
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
         terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_save();
     if (status == FS_OK) {
-        terminal_write("\x1B[32m");  /* Green success */
-        terminal_write_line("Filesystem snapshot saved to disk.");
+        terminal_write("\x1B[1;32m");  /* Bold green success */
+        terminal_write("[OK] ");
         terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("Filesystem snapshot saved to disk.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     } else {
         shell_print_fs_error(status);
     }
@@ -417,16 +631,23 @@ static void shell_cmd_savefs(void) {
 
 static void shell_cmd_loadfs(void) {
     if (!fs_persistence_available()) {
-        terminal_write("\x1B[33m");  /* Yellow warning */
+        terminal_write("\x1B[1;33m");  /* Bold yellow warning */
+        terminal_write("[WARNING] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[33m");
         terminal_write_line("Persistence unavailable: attach an ATA disk.");
         terminal_write("\x1B[0m");
         return;
     }
     fs_status_t status = fs_load();
     if (status == FS_OK) {
-        terminal_write("\x1B[32m");  /* Green success */
-        terminal_write_line("Filesystem reloaded from disk.");
+        terminal_write("\x1B[1;32m");  /* Bold green success */
+        terminal_write("[OK] ");
         terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("Filesystem reloaded from disk.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     } else {
         shell_print_fs_error(status);
     }
@@ -506,7 +727,23 @@ static void shell_cmd_cp(const char *args) {
         }
         if (status != FS_OK) {
             shell_print_fs_error(status);
+        } else {
+            terminal_write("\x1B[1;32m");  /* Bold green */
+            terminal_write("[OK] ");
+            terminal_write("\x1B[0m");
+            terminal_write("\x1B[32m");
+            terminal_write("File copied successfully.");
+            terminal_write("\x1B[0m");
+            terminal_write_line("");
         }
+    } else {
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("File copied successfully.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     }
 }
 
@@ -558,6 +795,14 @@ static void shell_cmd_mv(const char *args) {
     status = fs_remove(src, 0);
     if (status != FS_OK) {
         shell_print_fs_error(status);
+    } else {
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("File moved successfully.");
+        terminal_write("\x1B[0m");
+        terminal_write_line("");
     }
 }
 
@@ -606,7 +851,18 @@ static void shell_find_callback(const fs_dir_entry_t *entry, void *user_data) {
     full_path[pos] = '\0';
     
     if (strstr(entry->name, data->pattern) != NULL) {
-        terminal_write_line(full_path);
+        if (entry->is_directory) {
+            terminal_write("\x1B[1;36m");  /* Bold cyan */
+            terminal_write(full_path);
+            terminal_write("\x1B[90m");
+            terminal_write("/");
+            terminal_write("\x1B[0m");
+        } else {
+            terminal_write("\x1B[32m");  /* Green */
+            terminal_write(full_path);
+            terminal_write("\x1B[0m");
+        }
+        terminal_write_line("");
         (*data->found_count)++;
     }
     
@@ -673,7 +929,21 @@ static void shell_cmd_find(const char *args) {
     }
     
     if (found_count == 0) {
+        terminal_write("\x1B[33m");  /* Yellow */
         terminal_write_line("No matches found.");
+        terminal_write("\x1B[0m");
+    } else {
+        terminal_write("\x1B[90m");  /* Dark grey */
+        terminal_write("Found ");
+        terminal_write("\x1B[33m");
+        print_uint64(found_count);
+        terminal_write("\x1B[90m");
+        terminal_write(" match");
+        if (found_count != 1) {
+            terminal_write("es");
+        }
+        terminal_write_line(".");
+        terminal_write("\x1B[0m");
     }
 }
 
@@ -933,13 +1203,21 @@ static void shell_cmd_wc(const char *args) {
         words++;
     }
     
+    terminal_write("\x1B[33m");  /* Yellow */
     print_uint64(lines);
-    terminal_write(" ");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[33m");
     print_uint64(words);
-    terminal_write(" ");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[33m");
     print_uint64(chars);
-    terminal_write(" ");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[36m");  /* Cyan */
     terminal_write_line(path);
+    terminal_write("\x1B[0m");
 }
 
 static void shell_cmd_ansi_test(void) {
@@ -1208,17 +1486,35 @@ static void shell_cmd_threads(void) {
     thread_snapshot_t snapshots[SHELL_THREAD_SNAPSHOT_MAX];
     size_t count = thread_snapshot_list(snapshots, SHELL_THREAD_SNAPSHOT_MAX);
     if (count == 0) {
+        terminal_write("\x1B[33m");  /* Yellow */
         terminal_write_line("No active threads.");
+        terminal_write("\x1B[0m");
         return;
     }
-    terminal_write_line("ID     STATE      NAME");
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write("ID");
+    terminal_write("\x1B[0m");
+    terminal_write("     ");
+    terminal_write("\x1B[1;36m");
+    terminal_write("STATE");
+    terminal_write("\x1B[0m");
+    terminal_write("      ");
+    terminal_write("\x1B[1;36m");
+    terminal_write_line("NAME");
+    terminal_write("\x1B[0m");
     for (size_t i = 0; i < count; ++i) {
         terminal_write("  ");
+        terminal_write("\x1B[33m");  /* Yellow */
         print_uint64(snapshots[i].id);
+        terminal_write("\x1B[0m");
         terminal_write("    ");
+        terminal_write("\x1B[32m");  /* Green */
         terminal_write(thread_state_name(snapshots[i].state));
+        terminal_write("\x1B[0m");
         terminal_write("    ");
+        terminal_write("\x1B[36m");  /* Cyan */
         terminal_write_line(snapshots[i].name ? snapshots[i].name : "(null)");
+        terminal_write("\x1B[0m");
     }
 }
 
@@ -1292,6 +1588,7 @@ static void shell_cmd_ps(void) {
     terminal_write("\x1B[0m");  /* Reset */
     terminal_write_line("");
     terminal_write("* = current process");
+    terminal_write_line("");
 }
 
 static void shell_cmd_kill(const char *args) {
@@ -1751,16 +2048,25 @@ static void shell_cmd_testmem(void) {
 
 static void shell_cmd_history(void) {
     if (shell_history_count == 0) {
+        terminal_write("\x1B[33m");  /* Yellow */
         terminal_write_line("History is empty.");
+        terminal_write("\x1B[0m");
         return;
     }
-    terminal_write_line("Command history:");
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write_line("Command History:");
+    terminal_write("\x1B[0m");
+    terminal_write_line("");
     for (size_t i = 0; i < shell_history_count; ++i) {
+        terminal_write("\x1B[90m");  /* Dark grey */
         terminal_write("  ");
         print_uint64(i + 1);
         terminal_write(": ");
+        terminal_write("\x1B[0m");
         if (shell_history_data[i]) {
+            terminal_write("\x1B[36m");  /* Cyan */
             terminal_write_line(shell_history_data[i]);
+            terminal_write("\x1B[0m");
         } else {
             terminal_write_line("");
         }
@@ -1978,9 +2284,22 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    terminal_write("\x1B[1;31m");  /* Bold red */
+    terminal_write("[ERROR] ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[31m");
     terminal_write("Unknown command: ");
-    terminal_write_line(line);
-    terminal_write_line("Type 'help' for the list of commands.");
+    terminal_write("\x1B[33m");
+    terminal_write(line);
+    terminal_write("\x1B[0m");
+    terminal_write_line("");
+    terminal_write("\x1B[90m");
+    terminal_write("Type ");
+    terminal_write("\x1B[36m");
+    terminal_write("'help'");
+    terminal_write("\x1B[90m");
+    terminal_write_line(" for the list of commands.");
+    terminal_write("\x1B[0m");
 }
 
 static const char *shell_commands[] = {
@@ -2096,7 +2415,9 @@ static int shell_maybe_autosave(void) {
     fs_status_t status = fs_save();
     if (status == FS_OK) {
         terminal_write("\x1B[36m[autosave]\x1B[0m ");  /* Cyan for autosave */
-        terminal_write("\x1B[32mFilesystem snapshot saved.\x1B[0m");
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("Filesystem snapshot saved.");
+        terminal_write("\x1B[0m");
         terminal_write_line("");
     } else {
         terminal_write("\x1B[36m[autosave]\x1B[0m ");
@@ -2341,8 +2662,21 @@ void shell_run(void) {
     static char buffer[SHELL_BUFFER_SIZE];
 
     terminal_write_line("");
-    terminal_write_line("Simple shell ready. Type 'help' to begin.");
-    terminal_write_line("Tip: Use arrow keys for history, Tab for completion, Ctrl+R for search.");
+    terminal_write("\x1B[1;32m");  /* Bold green */
+    terminal_write("MyOs Shell ");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[32m");
+    terminal_write_line("ready.");
+    terminal_write("\x1B[0m");
+    terminal_write("\x1B[90m");
+    terminal_write("Tip: Type ");
+    terminal_write("\x1B[36m");
+    terminal_write("'help'");
+    terminal_write("\x1B[90m");
+    terminal_write(" to see available commands.");
+    terminal_write_line("");
+    terminal_write("\x1B[0m");
+    terminal_write_line("");
 
     while (1) {
         shell_maybe_autosave();
