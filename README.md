@@ -1,5 +1,10 @@
 # MyOs - Операционная система
 
+![C](https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white)
+![GitHub last commit](https://img.shields.io/github/last-commit/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=9ccbfb)
+![GitHub Repo stars](https://img.shields.io/github/stars/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=b9c8da)
+![GitHub repo size](https://img.shields.io/github/repo-size/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=d3bfe6)
+
 ## Обзор проекта
 
 MyOs - это простая операционная система с собственным ядром, файловой системой, оболочкой и драйверами устройств. Система поддерживает многозадачность через прерывания, управление памятью, работу с дисками ATA и интерактивную оболочку с расширенными возможностями.
