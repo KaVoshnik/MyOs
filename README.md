@@ -1,9 +1,13 @@
-# MyOs - Операционная система
+<h1 align=center>MyOs - Операционная система</h1>
 
+<div align=center>
+    
 ![C](https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white)
 ![GitHub last commit](https://img.shields.io/github/last-commit/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=9ccbfb)
 ![GitHub Repo stars](https://img.shields.io/github/stars/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=b9c8da)
 ![GitHub repo size](https://img.shields.io/github/repo-size/KaVoshnik/MyOs?style=for-the-badge&labelColor=101418&color=d3bfe6)
+
+</div>
 
 ## Обзор проекта
 
