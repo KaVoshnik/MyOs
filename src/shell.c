@@ -1290,7 +1290,7 @@ static void shell_cmd_myfetch(void) {
     terminal_write("Version:   ");
     terminal_write("\x1B[0m");
     terminal_write("\x1B[33m");  /* Yellow */
-    terminal_write_line("1.0.0");
+    terminal_write_line("1.1.0");
     
     /* Uptime */
     terminal_write("\x1B[1;36m");
