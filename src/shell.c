@@ -157,9 +157,9 @@ static void shell_print_prompt(void) {
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
 }
 
-static void shell_cmd_help(void) {
+static void shell_cmd_help_1(void) {
     terminal_write("\x1B[1;36m");  /* Bold cyan */
-    terminal_write_line("=== MyOs Shell Commands ===");
+    terminal_write_line("=== MyOs Shell Commands Page 1 ===");
     terminal_write("\x1B[0m");
     terminal_write_line("");
     
@@ -167,7 +167,7 @@ static void shell_cmd_help(void) {
     terminal_write_line("System:");
     terminal_write("\x1B[0m");
     terminal_write("  ");
-    terminal_write("\x1B[32mhelp\x1B[0m       - show this list");
+    terminal_write("\x1B[32mhelp 1-4\x1B[0m       - show this list");
     terminal_write_line("");
     terminal_write("  ");
     terminal_write("\x1B[32mclear\x1B[0m      - clear the screen");
@@ -191,7 +191,27 @@ static void shell_cmd_help(void) {
     terminal_write("\x1B[32mreboot\x1B[0m     - restart the system");
     terminal_write_line("");
     terminal_write_line("");
-    
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("System Info:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mdiskinfo\x1B[0m   - show ATA disk information");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmyfetch\x1B[0m    - display system information with logo");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mansi\x1B[0m       - test ANSI escape sequences");
+    terminal_write_line("");
+    terminal_write_line("");
+}
+
+static void shell_cmd_help_2(void) {
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write_line("=== MyOs Shell Commands Page 2 ===");
+    terminal_write("\x1B[0m");
+    terminal_write_line("");
+
     terminal_write("\x1B[1;33m");
     terminal_write_line("Filesystem:");
     terminal_write("\x1B[0m");
@@ -235,7 +255,14 @@ static void shell_cmd_help(void) {
     terminal_write("\x1B[32mloadfs\x1B[0m     - reload filesystem from disk");
     terminal_write_line("");
     terminal_write_line("");
-    
+}
+
+static void shell_cmd_help_3(void) {
+    terminal_write("\x1B[1;36m");  /* Bold cyan */
+    terminal_write_line("=== MyOs Shell Commands Page 3 ===");
+    terminal_write("\x1B[0m");
+    terminal_write_line("");
+
     terminal_write("\x1B[1;33m");
     terminal_write_line("Text Processing:");
     terminal_write("\x1B[0m");
@@ -278,8 +305,10 @@ static void shell_cmd_help(void) {
     terminal_write("\x1B[32mspawn TEXT\x1B[0m - start background process printing TEXT");
     terminal_write_line("");
     terminal_write_line("");
-    
-    terminal_write("\x1B[1;33m");
+}
+
+static void shell_cmd_help_4(void) {
+        terminal_write("\x1B[1;33m");
     terminal_write_line("Users & Security:");
     terminal_write("\x1B[0m");
     terminal_write("  ");
@@ -293,20 +322,6 @@ static void shell_cmd_help(void) {
     terminal_write_line("");
     terminal_write("  ");
     terminal_write("\x1B[32mpasswd\x1B[0m     - change password");
-    terminal_write_line("");
-    terminal_write_line("");
-    
-    terminal_write("\x1B[1;33m");
-    terminal_write_line("System Info:");
-    terminal_write("\x1B[0m");
-    terminal_write("  ");
-    terminal_write("\x1B[32mdiskinfo\x1B[0m   - show ATA disk information");
-    terminal_write_line("");
-    terminal_write("  ");
-    terminal_write("\x1B[32mmyfetch\x1B[0m    - display system information with logo");
-    terminal_write_line("");
-    terminal_write("  ");
-    terminal_write("\x1B[32mansi\x1B[0m       - test ANSI escape sequences");
     terminal_write_line("");
     terminal_write_line("");
     
@@ -2078,8 +2093,23 @@ static void shell_execute(const char *line) {
         return;
     }
 
-    if (strcmp(line, "help") == 0) {
-        shell_cmd_help();
+    if (strcmp(line, "help 1") == 0) {
+        shell_cmd_help_1();
+        return;
+    }
+    
+    if (strcmp(line, "help 2") == 0) {
+        shell_cmd_help_2();
+        return;
+    }
+
+    if (strcmp(line, "help 3") == 0) {
+        shell_cmd_help_3();
+        return;
+    }
+    
+    if (strcmp(line, "help 4") == 0) {
+        shell_cmd_help_4();
         return;
     }
 
@@ -2296,7 +2326,7 @@ static void shell_execute(const char *line) {
     terminal_write("\x1B[90m");
     terminal_write("Type ");
     terminal_write("\x1B[36m");
-    terminal_write("'help'");
+    terminal_write("'help 1-4'");
     terminal_write("\x1B[90m");
     terminal_write_line(" for the list of commands.");
     terminal_write("\x1B[0m");
@@ -2671,7 +2701,7 @@ void shell_run(void) {
     terminal_write("\x1B[90m");
     terminal_write("Tip: Type ");
     terminal_write("\x1B[36m");
-    terminal_write("'help'");
+    terminal_write("'help 1-4'");
     terminal_write("\x1B[90m");
     terminal_write(" to see available commands.");
     terminal_write_line("");
