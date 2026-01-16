@@ -9,6 +9,8 @@
 #include <io.h>
 #include <thread.h>
 #include <process.h>
+#include <user.h>
+#include <login.h>
 
 extern uint8_t _kernel_end;
 
@@ -42,7 +44,51 @@ void kernel_main(void) {
     fs_init();
     terminal_write_line("[kernel] Filesystem ready.");
 
+    user_system_init();
+    terminal_write_line("[kernel] User system ready.");
+
     terminal_write_line("[kernel] Initialization complete.");
+    
+    /* Check if first boot */
+    if (config_is_first_boot()) {
+        if (first_boot_setup() != 0) {
+            terminal_write_line("[kernel] Setup failed, halting.");
+            for (;;) {
+                __asm__ volatile("cli; hlt");
+            }
+        }
+    } else {
+        /* Normal boot - show login */
+        system_config_t config;
+        config_load(&config);
+        
+        if (config.auto_login && config.default_user[0] != '\0') {
+            /* Auto login */
+            if (user_set_current(config.default_user) == 0) {
+                terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
+                terminal_write("Auto-login as ");
+                terminal_write(config.default_user);
+                terminal_write_line(".");
+                terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
+            } else {
+                if (login_screen() != 0) {
+                    terminal_write_line("[kernel] Login failed, halting.");
+                    for (;;) {
+                        __asm__ volatile("cli; hlt");
+                    }
+                }
+            }
+        } else {
+            /* Require login */
+            if (login_screen() != 0) {
+                terminal_write_line("[kernel] Login failed, halting.");
+                for (;;) {
+                    __asm__ volatile("cli; hlt");
+                }
+            }
+        }
+    }
+    
     shell_run();
 }
 
