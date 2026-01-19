@@ -21,7 +21,7 @@ start:
     cli
     mov esp, stack_top
     
-    /* Save multiboot info pointer (passed in EBX) */
+    ; Save multiboot info pointer (passed in EBX)
     mov [multiboot_info], ebx
 
     lgdt [gdt_descriptor]
@@ -57,7 +57,7 @@ long_mode_entry:
     mov ss, ax
     mov rsp, stack_top
     
-    /* Pass multiboot info to kernel */
+    ; Pass multiboot info to kernel
     mov rdi, [multiboot_info]
 
     call kernel_main
