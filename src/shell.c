@@ -10,6 +10,7 @@
 #include <thread.h>
 #include <process.h>
 #include <user.h>
+#include <mouse.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -2708,15 +2709,32 @@ void shell_run(void) {
     terminal_write("\x1B[0m");
     terminal_write_line("");
 
-    while (1) {
+        while (1) {
         shell_maybe_autosave();
         
         shell_print_prompt();
         shell_read_line_with_history(buffer, SHELL_BUFFER_SIZE, shell_history_data, &shell_history_count, &shell_history_index);
         if (buffer[0] != '\0') {
             shell_execute(buffer);
-            /* Return to bottom after command execution */
             terminal_scroll_to_bottom();
+        }
+        
+        mouse_state_t state = get_mouse_state();
+        if (state.scroll != 0) {
+            // Отображаем скролл в терминале
+            terminal_write("\x1B[36m[MOUSE]\x1B[0m Scroll: ");
+            if (state.scroll > 0) {
+                terminal_write("\x1B[32m+");  // Зеленый для вверх
+                print_uint64(state.scroll);
+                terminal_write("\x1B[0m");
+                terminal_write_line(" (up)");
+            } else {
+                terminal_write("\x1B[31m");   // Красный для вниз
+                print_uint64(-state.scroll);
+                terminal_write("\x1B[0m");
+                terminal_write_line(" (down)");
+            }
+            state.scroll = 0;
         }
     }
 }

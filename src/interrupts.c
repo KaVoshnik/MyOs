@@ -4,6 +4,7 @@
 #include <string.h>
 #include <pit.h>
 #include <keyboard.h>
+#include <mouse.h>
 
 #define IDT_ENTRY_COUNT 256
 #define IDT_TYPE_INTERRUPT_GATE 0x8E
@@ -104,8 +105,8 @@ static void pic_remap(void) {
     outb(PIC2_DATA, ICW4_8086);
     io_wait();
 
-    outb(PIC1_DATA, 0xFC); /* unmask IRQ0 and IRQ1 */
-    outb(PIC2_DATA, 0xFF); /* keep all slave IRQs masked */
+    outb(PIC1_DATA, 0xE8);
+    outb(PIC2_DATA, 0xEF);
 }
 
 static void pic_send_eoi(uint8_t irq) {
@@ -209,6 +210,13 @@ static void irq_keyboard(struct interrupt_frame *frame) {
     pic_send_eoi(1);
 }
 
+__attribute__((interrupt))
+static void irq_mouse(struct interrupt_frame *frame) {
+    (void)frame;
+    mouse_handler();
+    pic_send_eoi(12);
+}
+
 void interrupts_init(void) {
     memset(idt, 0, sizeof(idt));
 
@@ -247,6 +255,7 @@ void interrupts_init(void) {
 
     idt_set_gate(IRQ_BASE + 0, (void *)irq_timer);
     idt_set_gate(IRQ_BASE + 1, (void *)irq_keyboard);
+    idt_set_gate(IRQ_BASE + 12, (void *)irq_mouse);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt[0];

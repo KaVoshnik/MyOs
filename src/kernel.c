@@ -2,6 +2,7 @@
 #include <interrupts.h>
 #include <pit.h>
 #include <keyboard.h>
+#include <mouse.h>
 #include <memory.h>
 #include <shell.h>
 #include <filesystem.h>
@@ -29,6 +30,7 @@ void kernel_main(void) {
     interrupts_init();
     pit_init(100);
     keyboard_init();
+    mouse_init();
     thread_system_init();
     process_system_init();
     
