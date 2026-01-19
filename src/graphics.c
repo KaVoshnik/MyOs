@@ -5,6 +5,41 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Multiboot information structure - must be declared before use */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t color_info[6];
+} __attribute__((packed));
+
+/* External reference to multiboot info (set in kernel.c) */
+extern struct multiboot_info *mb_info;
+
 /* Global graphics context */
 static graphics_context_t gfx_ctx = {0};
 static int graphics_initialized = 0;
@@ -221,6 +256,15 @@ void graphics_clear(uint32_t color) {
     if (!graphics_initialized) return;
     
     /* Clear using pitch-aware addressing */
+    /* For 32-bit mode, pitch should be divisible by 4, but check to be safe */
+    if (gfx_ctx.bpp != 32 || (gfx_ctx.pitch % 4) != 0) {
+        /* Fallback: use simple addressing if pitch is not aligned */
+        for (uint32_t i = 0; i < gfx_ctx.width * gfx_ctx.height; i++) {
+            gfx_ctx.framebuffer[i] = color;
+        }
+        return;
+    }
+    
     uint32_t pitch_words = gfx_ctx.pitch / 4;  /* pitch in bytes, convert to 32-bit words */
     for (uint32_t y = 0; y < gfx_ctx.height; y++) {
         for (uint32_t x = 0; x < gfx_ctx.width; x++) {
@@ -234,22 +278,37 @@ void graphics_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (!graphics_initialized) return;
     if (x >= gfx_ctx.width || y >= gfx_ctx.height) return;
     
-    gfx_ctx.framebuffer[y * gfx_ctx.width + x] = color;
+    /* Calculate pixel position based on pitch */
+    /* For 32-bit mode, pitch should be divisible by 4 */
+    if (gfx_ctx.bpp == 32 && (gfx_ctx.pitch % 4) == 0) {
+        uint32_t pitch_words = gfx_ctx.pitch / 4;  /* pitch in bytes, convert to 32-bit words */
+        uint32_t pixel_offset = y * pitch_words + x;
+        gfx_ctx.framebuffer[pixel_offset] = color;
+    } else {
+        /* Fallback: assume pitch equals width for non-32-bit or misaligned */
+        uint32_t pixel_offset = y * gfx_ctx.width + x;
+        gfx_ctx.framebuffer[pixel_offset] = color;
+    }
 }
 
 void graphics_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     if (!graphics_initialized) return;
     
+    /* Clamp to screen bounds */
+    if (x >= gfx_ctx.width || y >= gfx_ctx.height) return;
+    if (x + w > gfx_ctx.width) w = gfx_ctx.width - x;
+    if (y + h > gfx_ctx.height) h = gfx_ctx.height - y;
+    
     /* Top and bottom */
     for (uint32_t i = 0; i < w; i++) {
         graphics_pixel(x + i, y, color);
-        graphics_pixel(x + i, y + h - 1, color);
+        if (h > 0) graphics_pixel(x + i, y + h - 1, color);
     }
     
     /* Left and right */
     for (uint32_t i = 0; i < h; i++) {
         graphics_pixel(x, y + i, color);
-        graphics_pixel(x + w - 1, y + i, color);
+        if (w > 0) graphics_pixel(x + w - 1, y + i, color);
     }
 }
 
@@ -301,10 +360,11 @@ void graphics_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t color) {
     int32_t px = 0;
     int32_t py = radius;
     
-    graphics_pixel(x, y + radius, color);
-    graphics_pixel(x, y - radius, color);
-    graphics_pixel(x + radius, y, color);
-    graphics_pixel(x - radius, y, color);
+    /* Draw initial points with bounds checking */
+    if (y + radius < gfx_ctx.height) graphics_pixel(x, y + radius, color);
+    if (radius <= y) graphics_pixel(x, y - radius, color);
+    if (x + radius < gfx_ctx.width) graphics_pixel(x + radius, y, color);
+    if (radius <= x) graphics_pixel(x - radius, y, color);
     
     while (px < py) {
         if (f >= 0) {
@@ -316,14 +376,18 @@ void graphics_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t color) {
         ddF_x += 2;
         f += ddF_x;
         
-        graphics_pixel(x + px, y + py, color);
-        graphics_pixel(x - px, y + py, color);
-        graphics_pixel(x + px, y - py, color);
-        graphics_pixel(x - px, y - py, color);
-        graphics_pixel(x + py, y + px, color);
-        graphics_pixel(x - py, y + px, color);
-        graphics_pixel(x + py, y - px, color);
-        graphics_pixel(x - py, y - px, color);
+        /* Draw 8 symmetric points with bounds checking */
+        uint32_t px_u = (uint32_t)px;
+        uint32_t py_u = (uint32_t)py;
+        
+        if (x + px_u < gfx_ctx.width && y + py_u < gfx_ctx.height) graphics_pixel(x + px_u, y + py_u, color);
+        if (px_u <= x && y + py_u < gfx_ctx.height) graphics_pixel(x - px_u, y + py_u, color);
+        if (x + px_u < gfx_ctx.width && py_u <= y) graphics_pixel(x + px_u, y - py_u, color);
+        if (px_u <= x && py_u <= y) graphics_pixel(x - px_u, y - py_u, color);
+        if (x + py_u < gfx_ctx.width && y + px_u < gfx_ctx.height) graphics_pixel(x + py_u, y + px_u, color);
+        if (py_u <= x && y + px_u < gfx_ctx.height) graphics_pixel(x - py_u, y + px_u, color);
+        if (x + py_u < gfx_ctx.width && px_u <= y) graphics_pixel(x + py_u, y - px_u, color);
+        if (py_u <= x && px_u <= y) graphics_pixel(x - py_u, y - px_u, color);
     }
 }
 
@@ -333,10 +397,13 @@ void graphics_fill_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t colo
     for (int32_t py = -(int32_t)radius; py <= (int32_t)radius; py++) {
         for (int32_t px = -(int32_t)radius; px <= (int32_t)radius; px++) {
             if (px * px + py * py <= (int32_t)(radius * radius)) {
-                uint32_t fx = x + px;
-                uint32_t fy = y + py;
-                if (fx < gfx_ctx.width && fy < gfx_ctx.height) {
-                    graphics_pixel(fx, fy, color);
+                /* Check for underflow before converting to uint32_t */
+                if ((int32_t)x + px >= 0 && (int32_t)y + py >= 0) {
+                    uint32_t fx = (uint32_t)((int32_t)x + px);
+                    uint32_t fy = (uint32_t)((int32_t)y + py);
+                    if (fx < gfx_ctx.width && fy < gfx_ctx.height) {
+                        graphics_pixel(fx, fy, color);
+                    }
                 }
             }
         }
@@ -381,41 +448,6 @@ void graphics_draw_string(uint32_t x, uint32_t y, const char *str, uint32_t fg_c
     }
 }
 
-/* Forward declaration of multiboot info structure */
-struct multiboot_info {
-    uint32_t flags;
-    uint32_t mem_lower;
-    uint32_t mem_upper;
-    uint32_t boot_device;
-    uint32_t cmdline;
-    uint32_t mods_count;
-    uint32_t mods_addr;
-    uint32_t syms[4];
-    uint32_t mmap_length;
-    uint32_t mmap_addr;
-    uint32_t drives_length;
-    uint32_t drives_addr;
-    uint32_t config_table;
-    uint32_t boot_loader_name;
-    uint32_t apm_table;
-    uint32_t vbe_control_info;
-    uint32_t vbe_mode_info;
-    uint16_t vbe_mode;
-    uint16_t vbe_interface_seg;
-    uint16_t vbe_interface_off;
-    uint16_t vbe_interface_len;
-    uint64_t framebuffer_addr;
-    uint32_t framebuffer_pitch;
-    uint32_t framebuffer_width;
-    uint32_t framebuffer_height;
-    uint8_t framebuffer_bpp;
-    uint8_t framebuffer_type;
-    uint8_t color_info[6];
-} __attribute__((packed));
-
-/* External reference to multiboot info (set in kernel.c) */
-extern struct multiboot_info *mb_info;
-
 int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
     /* Parameters are used for validation/compatibility checking */
     (void)width;
@@ -443,7 +475,7 @@ int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
 void graphics_flush(void) {
     /* If we're using Multiboot framebuffer directly, no need to copy */
     /* The framebuffer is already the video memory */
-    if (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0) {
+    if (using_multiboot_fb || (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0)) {
         /* We're already writing directly to video memory, nothing to flush */
         return;
     }
@@ -457,10 +489,27 @@ void graphics_flush(void) {
         return;  /* Already the same, or using Multiboot framebuffer directly */
     }
     
-    /* Copy our framebuffer to video memory */
-    size_t size = gfx_ctx.width * gfx_ctx.height;
-    for (size_t i = 0; i < size; i++) {
-        video_framebuffer[i] = gfx_ctx.framebuffer[i];
+    /* Copy our framebuffer to video memory, respecting pitch */
+    /* For 32-bit mode, pitch should be divisible by 4 */
+    if (gfx_ctx.bpp != 32 || (gfx_ctx.pitch % 4) != 0) {
+        /* Fallback: simple copy if pitch is not aligned */
+        size_t size = gfx_ctx.width * gfx_ctx.height;
+        for (size_t i = 0; i < size; i++) {
+            video_framebuffer[i] = gfx_ctx.framebuffer[i];
+        }
+        return;
+    }
+    
+    uint32_t src_pitch_words = gfx_ctx.pitch / 4;
+    uint32_t dst_pitch = (mb_info && (mb_info->flags & (1 << 12))) ? mb_info->framebuffer_pitch : gfx_ctx.pitch;
+    uint32_t dst_pitch_words = (dst_pitch % 4 == 0) ? (dst_pitch / 4) : src_pitch_words;
+    
+    for (uint32_t y = 0; y < gfx_ctx.height; y++) {
+        for (uint32_t x = 0; x < gfx_ctx.width; x++) {
+            uint32_t src_offset = y * src_pitch_words + x;
+            uint32_t dst_offset = y * dst_pitch_words + x;
+            video_framebuffer[dst_offset] = gfx_ctx.framebuffer[src_offset];
+        }
     }
 }
 
@@ -472,6 +521,11 @@ void graphics_show(void) {
     /* Switch to graphics mode and display framebuffer */
     if (!graphics_initialized) {
         return;
+    }
+    
+    /* If we're already using Multiboot framebuffer, we're done */
+    if (using_multiboot_fb) {
+        return;  /* Already writing directly to video memory */
     }
     
     /* Set video mode - this will only succeed if Multiboot provides framebuffer */
