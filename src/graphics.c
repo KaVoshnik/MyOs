@@ -10,6 +10,7 @@ static graphics_context_t gfx_ctx = {0};
 static int graphics_initialized = 0;
 static uint32_t *video_framebuffer = NULL;  /* Physical video memory address */
 static int graphics_mode_active = 0;  /* Whether we're in graphics mode */
+static int using_multiboot_fb = 0;  /* Whether we're using Multiboot framebuffer directly */
 
 /* Simple 8x8 bitmap font (ASCII 32-127) */
 static const uint8_t font_8x8[96][8] = {
@@ -125,10 +126,29 @@ int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
         return -1; /* Already initialized */
     }
 
-    /* For now, use a simple approach: allocate framebuffer in memory */
-    /* In a real implementation, we'd get the framebuffer address from VBE */
-    /* VBE mode numbers (VBE_MODE_*) are defined but not used yet - will be used when implementing VBE BIOS calls */
+    /* Try to use Multiboot framebuffer if available */
+    if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag */
+        uint64_t fb_addr = mb_info->framebuffer_addr;
+        
+        if (fb_addr != 0) {
+            /* Use Multiboot framebuffer directly - this is the actual video memory! */
+            gfx_ctx.framebuffer = (uint32_t *)(uintptr_t)fb_addr;
+            gfx_ctx.width = mb_info->framebuffer_width;
+            gfx_ctx.height = mb_info->framebuffer_height;
+            gfx_ctx.pitch = mb_info->framebuffer_pitch;
+            gfx_ctx.bpp = mb_info->framebuffer_bpp;
+            gfx_ctx.current_color = COLOR_WHITE;
+            
+            video_framebuffer = gfx_ctx.framebuffer;
+            graphics_mode_active = 1;
+            graphics_initialized = 1;
+            using_multiboot_fb = 1;  /* Mark that we're using Multiboot framebuffer */
+            
+            return 0;
+        }
+    }
     
+    /* Fallback: allocate framebuffer in memory */
     /* Check if we have enough memory */
     size_t framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
     size_t available = memory_heap_size() - memory_bytes_used();
@@ -174,11 +194,15 @@ int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
 }
 
 void graphics_cleanup(void) {
-    if (gfx_ctx.framebuffer) {
+    /* Don't free Multiboot framebuffer - it's not allocated by us */
+    if (gfx_ctx.framebuffer && !using_multiboot_fb) {
         kfree(gfx_ctx.framebuffer);
         gfx_ctx.framebuffer = NULL;
     }
     graphics_initialized = 0;
+    graphics_mode_active = 0;
+    using_multiboot_fb = 0;
+    video_framebuffer = NULL;
 }
 
 graphics_context_t *graphics_get_context(void) {
@@ -196,8 +220,13 @@ uint32_t graphics_get_color(void) {
 void graphics_clear(uint32_t color) {
     if (!graphics_initialized) return;
     
-    for (uint32_t i = 0; i < gfx_ctx.width * gfx_ctx.height; i++) {
-        gfx_ctx.framebuffer[i] = color;
+    /* Clear using pitch-aware addressing */
+    uint32_t pitch_words = gfx_ctx.pitch / 4;  /* pitch in bytes, convert to 32-bit words */
+    for (uint32_t y = 0; y < gfx_ctx.height; y++) {
+        for (uint32_t x = 0; x < gfx_ctx.width; x++) {
+            uint32_t offset = y * pitch_words + x;
+            gfx_ctx.framebuffer[offset] = color;
+        }
     }
 }
 
@@ -412,35 +441,26 @@ int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
 }
 
 void graphics_flush(void) {
-    /* Copy our framebuffer to video memory */
+    /* If we're using Multiboot framebuffer directly, no need to copy */
+    /* The framebuffer is already the video memory */
+    if (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0) {
+        /* We're already writing directly to video memory, nothing to flush */
+        return;
+    }
+    
+    /* Only copy if we have a separate framebuffer and video memory */
     if (!graphics_initialized || !graphics_mode_active || !video_framebuffer) {
         return;
     }
     
-    if (!gfx_ctx.framebuffer) {
-        return;
+    if (!gfx_ctx.framebuffer || gfx_ctx.framebuffer == video_framebuffer) {
+        return;  /* Already the same, or using Multiboot framebuffer directly */
     }
     
-    /* Only copy if we have valid video framebuffer from Multiboot */
-    /* Don't try to write to arbitrary addresses - it causes page faults */
-    if (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0) {
-        /* Use Multiboot framebuffer dimensions */
-        uint32_t mb_width = mb_info->framebuffer_width;
-        uint32_t mb_height = mb_info->framebuffer_height;
-        uint32_t mb_pitch = mb_info->framebuffer_pitch;
-        
-        /* Calculate copy dimensions - use smaller of the two */
-        uint32_t copy_width = (gfx_ctx.width < mb_width) ? gfx_ctx.width : mb_width;
-        uint32_t copy_height = (gfx_ctx.height < mb_height) ? gfx_ctx.height : mb_height;
-        
-        /* Copy line by line, respecting pitch */
-        for (uint32_t y = 0; y < copy_height; y++) {
-            for (uint32_t x = 0; x < copy_width; x++) {
-                uint32_t src_idx = y * gfx_ctx.width + x;
-                uint32_t dst_idx = y * (mb_pitch / 4) + x;  /* pitch is in bytes, we use 32-bit words */
-                video_framebuffer[dst_idx] = gfx_ctx.framebuffer[src_idx];
-            }
-        }
+    /* Copy our framebuffer to video memory */
+    size_t size = gfx_ctx.width * gfx_ctx.height;
+    for (size_t i = 0; i < size; i++) {
+        video_framebuffer[i] = gfx_ctx.framebuffer[i];
     }
 }
 
