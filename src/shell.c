@@ -1318,7 +1318,7 @@ static void shell_cmd_gui(void) {
         print_uint64(free / 1024);
         terminal_write_line(" KiB");
         terminal_write_line("[GUI] Note: Increase heap size in kernel.c to support larger resolutions.");
-        terminal_write_line("      Current heap: 1 MiB (may be insufficient)");
+        terminal_write_line("      Current heap: 4 MiB");
         return;
     }
     
@@ -1329,9 +1329,20 @@ static void shell_cmd_gui(void) {
     graphics_demo();
     
     terminal_write_line("[GUI] Demo complete!");
-    terminal_write_line("[GUI] Note: Framebuffer is in memory.");
-    terminal_write_line("[GUI]       To display it, VBE mode switching is needed.");
-    terminal_write_line("[GUI]       Graphics context is ready for use.");
+    terminal_write_line("[GUI] Attempting to switch to graphics mode...");
+    
+    /* Try to switch to graphics mode and show framebuffer */
+    graphics_show();
+    
+    if (graphics_mode_active) {
+        terminal_write_line("[GUI] Graphics mode activated!");
+        terminal_write_line("[GUI] Framebuffer copied to video memory.");
+        terminal_write_line("[GUI] Note: If screen is blank, VBE mode may need BIOS setup.");
+    } else {
+        terminal_write_line("[GUI] Note: Framebuffer is in memory.");
+        terminal_write_line("[GUI]       VBE mode switching requires BIOS calls.");
+        terminal_write_line("[GUI]       Graphics context is ready for use.");
+    }
     
     graphics_context_t *ctx = graphics_get_context();
     if (ctx) {

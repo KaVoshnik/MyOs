@@ -99,6 +99,11 @@ void graphics_fill_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t colo
 void graphics_draw_char(uint32_t x, uint32_t y, char c, uint32_t fg_color, uint32_t bg_color);
 void graphics_draw_string(uint32_t x, uint32_t y, const char *str, uint32_t fg_color, uint32_t bg_color);
 
+/* Display functions */
+int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp);
+void graphics_flush(void);  /* Copy framebuffer to video memory */
+void graphics_show(void);   /* Switch to graphics mode and show framebuffer */
+
 /* Test/demo functions */
 void graphics_demo(void);
 

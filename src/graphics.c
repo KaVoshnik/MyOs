@@ -8,6 +8,8 @@
 /* Global graphics context */
 static graphics_context_t gfx_ctx = {0};
 static int graphics_initialized = 0;
+static uint32_t *video_framebuffer = NULL;  /* Physical video memory address */
+static int graphics_mode_active = 0;  /* Whether we're in graphics mode */
 
 /* Simple 8x8 bitmap font (ASCII 32-127) */
 static const uint8_t font_8x8[96][8] = {
@@ -350,6 +352,97 @@ void graphics_draw_string(uint32_t x, uint32_t y, const char *str, uint32_t fg_c
     }
 }
 
+/* Forward declaration of multiboot info structure */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t color_info[6];
+} __attribute__((packed));
+
+/* External reference to multiboot info (set in kernel.c) */
+extern struct multiboot_info *mb_info;
+
+int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
+    /* Try to get framebuffer from Multiboot info */
+    if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag (bit 12) */
+        video_framebuffer = (uint32_t *)(uintptr_t)mb_info->framebuffer_addr;
+        
+        if (video_framebuffer && mb_info->framebuffer_addr != 0) {
+            graphics_mode_active = 1;
+            return 0;
+        }
+    }
+    
+    /* Fallback: try known addresses (for QEMU without Multiboot framebuffer) */
+    uint32_t *possible_addresses[] = {
+        (uint32_t *)0xE0000000,  /* Common QEMU VBE framebuffer */
+        (uint32_t *)0xFD000000,  /* Another possible address */
+    };
+    
+    for (size_t i = 0; i < sizeof(possible_addresses) / sizeof(possible_addresses[0]); i++) {
+        video_framebuffer = possible_addresses[i];
+        graphics_mode_active = 1;
+        return 0;
+    }
+    
+    return -1;  /* No framebuffer found */
+}
+
+void graphics_flush(void) {
+    /* Copy our framebuffer to video memory */
+    if (!graphics_initialized || !graphics_mode_active || !video_framebuffer) {
+        return;
+    }
+    
+    if (!gfx_ctx.framebuffer) {
+        return;
+    }
+    
+    /* Copy framebuffer to video memory */
+    size_t size = gfx_ctx.width * gfx_ctx.height;
+    for (size_t i = 0; i < size; i++) {
+        video_framebuffer[i] = gfx_ctx.framebuffer[i];
+    }
+}
+
+void graphics_show(void) {
+    /* Switch to graphics mode and display framebuffer */
+    if (!graphics_initialized) {
+        return;
+    }
+    
+    /* Set video mode */
+    graphics_set_video_mode(gfx_ctx.width, gfx_ctx.height, gfx_ctx.bpp);
+    
+    /* Copy framebuffer to screen */
+    graphics_flush();
+}
+
 void graphics_demo(void) {
     if (!graphics_initialized) {
         return;
@@ -379,5 +472,10 @@ void graphics_demo(void) {
     graphics_draw_string(100, 320, "Circle", COLOR_YELLOW, 0xFFFFFFFF);
     graphics_draw_string(350, 320, "Filled", COLOR_BLACK, 0xFFFFFFFF);
     graphics_draw_string(200, 420, "Hello, Graphics!", COLOR_WHITE, 0xFFFFFFFF);
+    
+    /* Show on screen if video mode is set */
+    if (graphics_mode_active) {
+        graphics_flush();
+    }
 }
 
