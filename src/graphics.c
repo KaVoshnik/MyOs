@@ -118,13 +118,6 @@ static const uint8_t font_8x8[96][8] = {
 /* In real implementation, we'd use VBE BIOS calls */
 /* For QEMU, we can use VBE mode 0x115 (800x600x32) */
 
-static int set_vbe_mode(uint16_t mode) {
-    /* In real hardware, this would use BIOS interrupt 0x10 */
-    /* For now, we'll assume the mode is already set or use a fallback */
-    /* This is a simplified version - full VBE requires BIOS calls */
-    return 0;
-}
-
 int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
     if (graphics_initialized) {
         return -1; /* Already initialized */
@@ -132,16 +125,7 @@ int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
 
     /* For now, use a simple approach: allocate framebuffer in memory */
     /* In a real implementation, we'd get the framebuffer address from VBE */
-    
-    /* Try to set VBE mode */
-    uint16_t mode = 0;
-    if (width == 800 && height == 600 && bpp == 32) {
-        mode = VBE_MODE_800x600x32;
-    } else if (width == 640 && height == 480 && bpp == 32) {
-        mode = VBE_MODE_640x480x32;
-    } else if (width == 1024 && height == 768 && bpp == 32) {
-        mode = VBE_MODE_1024x768x32;
-    }
+    /* VBE mode numbers (VBE_MODE_*) are defined but not used yet - will be used when implementing VBE BIOS calls */
     
     /* Allocate framebuffer */
     uint32_t framebuffer_size = width * height * (bpp / 8);
@@ -308,9 +292,13 @@ void graphics_fill_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t colo
 
 void graphics_draw_char(uint32_t x, uint32_t y, char c, uint32_t fg_color, uint32_t bg_color) {
     if (!graphics_initialized) return;
-    if (c < 32 || c > 127) c = '?';
     
-    const uint8_t *font_data = font_8x8[c - 32];
+    /* Clamp character to valid range */
+    unsigned char uc = (unsigned char)c;
+    if (uc < 32) uc = '?';
+    if (uc > 127) uc = '?';
+    
+    const uint8_t *font_data = font_8x8[uc - 32];
     
     for (uint32_t row = 0; row < 8; row++) {
         uint8_t row_data = font_data[row];
