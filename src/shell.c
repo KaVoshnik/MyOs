@@ -11,6 +11,7 @@
 #include <process.h>
 #include <user.h>
 #include <mouse.h>
+#include <graphics.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -203,6 +204,9 @@ static void shell_cmd_help_1(void) {
     terminal_write_line("");
     terminal_write("  ");
     terminal_write("\x1B[32mansi\x1B[0m       - test ANSI escape sequences");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mgui\x1B[0m        - test graphics subsystem (demo)");
     terminal_write_line("");
     terminal_write_line("");
 }
@@ -1281,6 +1285,51 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
+static void shell_cmd_gui(void) {
+    terminal_write_line("[GUI] Initializing graphics subsystem...");
+    
+    /* Initialize graphics with 800x600x32 */
+    int result = graphics_init(800, 600, 32);
+    if (result != 0) {
+        terminal_write("\x1B[1;31m[ERROR]\x1B[0m ");
+        terminal_write_line("Failed to initialize graphics.");
+        terminal_write_line("Note: Graphics subsystem is in development.");
+        terminal_write_line("      Full VBE support requires BIOS calls.");
+        return;
+    }
+    
+    terminal_write_line("[GUI] Graphics initialized successfully!");
+    terminal_write_line("[GUI] Running demo...");
+    
+    /* Run demo */
+    graphics_demo();
+    
+    terminal_write_line("[GUI] Demo complete!");
+    terminal_write_line("[GUI] Note: Framebuffer is in memory.");
+    terminal_write_line("[GUI]       To display it, VBE mode switching is needed.");
+    terminal_write_line("[GUI]       Graphics context is ready for use.");
+    
+    graphics_context_t *ctx = graphics_get_context();
+    if (ctx) {
+        terminal_write("[GUI] Framebuffer: ");
+        terminal_write("0x");
+        /* Print framebuffer address */
+        uintptr_t addr = (uintptr_t)ctx->framebuffer;
+        char hex[] = "0123456789ABCDEF";
+        for (int i = 60; i >= 0; i -= 4) {
+            terminal_putc(hex[(addr >> i) & 0xF]);
+        }
+        terminal_write_line("");
+        terminal_write("[GUI] Resolution: ");
+        print_uint64(ctx->width);
+        terminal_write("x");
+        print_uint64(ctx->height);
+        terminal_write(" @ ");
+        print_uint64(ctx->bpp);
+        terminal_write_line(" bpp");
+    }
+}
+
 static void shell_cmd_myfetch(void) {
     /* ASCII art logo with ⌘ symbol */
     terminal_write("\x1B[1;36m");  /* Bold cyan color */
@@ -2275,6 +2324,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "gui")) != NULL) {
+        (void)args;
+        shell_cmd_gui();
+        return;
+    }
+
     if ((args = shell_match_command(line, "myfetch")) != NULL) {
         (void)args;
         shell_cmd_myfetch();
@@ -2337,7 +2392,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "myfetch", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
