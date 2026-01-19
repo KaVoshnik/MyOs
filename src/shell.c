@@ -1288,13 +1288,37 @@ static void shell_cmd_ansi_test(void) {
 static void shell_cmd_gui(void) {
     terminal_write_line("[GUI] Initializing graphics subsystem...");
     
-    /* Initialize graphics with 800x600x32 */
+    /* Show memory status */
+    size_t used = memory_bytes_used();
+    size_t total = memory_heap_size();
+    size_t free = (total > used) ? (total - used) : 0;
+    terminal_write("[GUI] Memory: ");
+    print_uint64(free / 1024);
+    terminal_write(" KiB free / ");
+    print_uint64(total / 1024);
+    terminal_write_line(" KiB total");
+    
+    /* Try to initialize graphics with 800x600x32 */
+    /* It will automatically fallback to smaller resolution if needed */
     int result = graphics_init(800, 600, 32);
     if (result != 0) {
         terminal_write("\x1B[1;31m[ERROR]\x1B[0m ");
-        terminal_write_line("Failed to initialize graphics.");
-        terminal_write_line("Note: Graphics subsystem is in development.");
-        terminal_write_line("      Full VBE support requires BIOS calls.");
+        if (result == -1) {
+            terminal_write_line("Failed to allocate framebuffer (out of memory).");
+        } else if (result == -2) {
+            terminal_write_line("Not enough memory for framebuffer.");
+        } else {
+            terminal_write_line("Failed to initialize graphics.");
+        }
+        terminal_write("[GUI] Required: ~");
+        print_uint64((800 * 600 * 4) / 1024);
+        terminal_write(" KiB for 800x600x32");
+        terminal_write_line("");
+        terminal_write("[GUI] Available: ");
+        print_uint64(free / 1024);
+        terminal_write_line(" KiB");
+        terminal_write_line("[GUI] Note: Increase heap size in kernel.c to support larger resolutions.");
+        terminal_write_line("      Current heap: 1 MiB (may be insufficient)");
         return;
     }
     

@@ -127,8 +127,30 @@ int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
     /* In a real implementation, we'd get the framebuffer address from VBE */
     /* VBE mode numbers (VBE_MODE_*) are defined but not used yet - will be used when implementing VBE BIOS calls */
     
+    /* Check if we have enough memory */
+    size_t framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+    size_t available = memory_heap_size() - memory_bytes_used();
+    
+    if (framebuffer_size > available) {
+        /* Try smaller resolution if requested size is too large */
+        if (width == 800 && height == 600) {
+            /* Fallback to 640x480 */
+            width = 640;
+            height = 480;
+            framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+        } else if (width == 640 && height == 480) {
+            /* Fallback to 320x240 */
+            width = 320;
+            height = 240;
+            framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+        }
+        
+        if (framebuffer_size > available) {
+            return -2; /* Not enough memory even for smaller resolution */
+        }
+    }
+    
     /* Allocate framebuffer */
-    uint32_t framebuffer_size = width * height * (bpp / 8);
     uint32_t *framebuffer = (uint32_t *)kmalloc(framebuffer_size);
     
     if (!framebuffer) {

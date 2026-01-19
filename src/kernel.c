@@ -23,7 +23,7 @@ void kernel_main(void) {
     terminal_write_line("[kernel] Setting up interrupts...");
 
     uintptr_t heap_start = ((uintptr_t)&_kernel_end + 0xFFF) & ~((uintptr_t)0xFFF);
-    memory_init(heap_start, 0x100000); /* 1 MiB heap */
+    memory_init(heap_start, 0x400000); /* 4 MiB heap (increased for graphics framebuffer) */
     terminal_write_line("[kernel] Heap initialized.");
 
     interrupts_disable();
