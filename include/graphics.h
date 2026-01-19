@@ -103,6 +103,7 @@ void graphics_draw_string(uint32_t x, uint32_t y, const char *str, uint32_t fg_c
 int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp);
 void graphics_flush(void);  /* Copy framebuffer to video memory */
 void graphics_show(void);   /* Switch to graphics mode and show framebuffer */
+int graphics_is_mode_active(void);  /* Check if graphics mode is active */
 
 /* Test/demo functions */
 void graphics_demo(void);

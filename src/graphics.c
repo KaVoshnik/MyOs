@@ -430,6 +430,10 @@ void graphics_flush(void) {
     }
 }
 
+int graphics_is_mode_active(void) {
+    return graphics_mode_active ? 1 : 0;
+}
+
 void graphics_show(void) {
     /* Switch to graphics mode and display framebuffer */
     if (!graphics_initialized) {

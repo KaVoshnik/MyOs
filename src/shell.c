@@ -1334,7 +1334,7 @@ static void shell_cmd_gui(void) {
     /* Try to switch to graphics mode and show framebuffer */
     graphics_show();
     
-    if (graphics_mode_active) {
+    if (graphics_is_mode_active()) {
         terminal_write_line("[GUI] Graphics mode activated!");
         terminal_write_line("[GUI] Framebuffer copied to video memory.");
         terminal_write_line("[GUI] Note: If screen is blank, VBE mode may need BIOS setup.");
