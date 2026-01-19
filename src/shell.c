@@ -1285,6 +1285,40 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
+/* Forward declaration of multiboot info structure */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t color_info[6];
+} __attribute__((packed));
+
+extern struct multiboot_info *mb_info;
+
 static void shell_cmd_gui(void) {
     terminal_write_line("[GUI] Initializing graphics subsystem...");
     
@@ -1329,6 +1363,40 @@ static void shell_cmd_gui(void) {
     graphics_demo();
     
     terminal_write_line("[GUI] Demo complete!");
+    
+    /* Check Multiboot framebuffer status */
+    if (mb_info) {
+        terminal_write("[GUI] Multiboot info available, flags: 0x");
+        char hex[] = "0123456789ABCDEF";
+        uint32_t flags = mb_info->flags;
+        for (int i = 28; i >= 0; i -= 4) {
+            terminal_putc(hex[(flags >> i) & 0xF]);
+        }
+        terminal_write_line("");
+        
+        if (mb_info->flags & (1 << 12)) {
+            terminal_write_line("[GUI] Multiboot framebuffer info available!");
+            terminal_write("[GUI] Framebuffer address: 0x");
+            uint64_t fb_addr = mb_info->framebuffer_addr;
+            for (int i = 60; i >= 0; i -= 4) {
+                terminal_putc(hex[(fb_addr >> i) & 0xF]);
+            }
+            terminal_write_line("");
+            terminal_write("[GUI] Resolution: ");
+            print_uint64(mb_info->framebuffer_width);
+            terminal_write("x");
+            print_uint64(mb_info->framebuffer_height);
+            terminal_write(" @ ");
+            print_uint64(mb_info->framebuffer_bpp);
+            terminal_write_line(" bpp");
+        } else {
+            terminal_write_line("[GUI] Multiboot framebuffer info NOT available.");
+            terminal_write_line("[GUI] GRUB may not be configured for framebuffer.");
+        }
+    } else {
+        terminal_write_line("[GUI] Multiboot info not available.");
+    }
+    
     terminal_write_line("[GUI] Attempting to switch to graphics mode...");
     
     /* Try to switch to graphics mode and show framebuffer */
@@ -1338,7 +1406,8 @@ static void shell_cmd_gui(void) {
     if (graphics_is_mode_active()) {
         terminal_write_line("[GUI] Graphics mode activated!");
         terminal_write_line("[GUI] Framebuffer copied to video memory.");
-        terminal_write_line("[GUI] Note: Graphics should be visible on screen.");
+        terminal_write_line("[GUI] Note: If graphics not visible, screen may still be in text mode.");
+        terminal_write_line("[GUI]       Try: QEMU with -vga std or -vga vmware");
     } else {
         terminal_write_line("[GUI] Note: Framebuffer is in memory only.");
         terminal_write_line("[GUI]       Multiboot framebuffer not available.");

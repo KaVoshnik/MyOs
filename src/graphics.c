@@ -424,17 +424,22 @@ void graphics_flush(void) {
     /* Only copy if we have valid video framebuffer from Multiboot */
     /* Don't try to write to arbitrary addresses - it causes page faults */
     if (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0) {
-        size_t size = gfx_ctx.width * gfx_ctx.height;
-        size_t max_size = mb_info->framebuffer_width * mb_info->framebuffer_height;
+        /* Use Multiboot framebuffer dimensions */
+        uint32_t mb_width = mb_info->framebuffer_width;
+        uint32_t mb_height = mb_info->framebuffer_height;
+        uint32_t mb_pitch = mb_info->framebuffer_pitch;
         
-        /* Don't copy more than available */
-        if (size > max_size) {
-            size = max_size;
-        }
+        /* Calculate copy dimensions - use smaller of the two */
+        uint32_t copy_width = (gfx_ctx.width < mb_width) ? gfx_ctx.width : mb_width;
+        uint32_t copy_height = (gfx_ctx.height < mb_height) ? gfx_ctx.height : mb_height;
         
-        /* Copy framebuffer to video memory */
-        for (size_t i = 0; i < size; i++) {
-            video_framebuffer[i] = gfx_ctx.framebuffer[i];
+        /* Copy line by line, respecting pitch */
+        for (uint32_t y = 0; y < copy_height; y++) {
+            for (uint32_t x = 0; x < copy_width; x++) {
+                uint32_t src_idx = y * gfx_ctx.width + x;
+                uint32_t dst_idx = y * (mb_pitch / 4) + x;  /* pitch is in bytes, we use 32-bit words */
+                video_framebuffer[dst_idx] = gfx_ctx.framebuffer[src_idx];
+            }
         }
     }
 }
