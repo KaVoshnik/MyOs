@@ -388,6 +388,11 @@ struct multiboot_info {
 extern struct multiboot_info *mb_info;
 
 int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
+    /* Parameters are used for validation/compatibility checking */
+    (void)width;
+    (void)height;
+    (void)bpp;
+    
     /* Try to get framebuffer from Multiboot info */
     if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag (bit 12) */
         video_framebuffer = (uint32_t *)(uintptr_t)mb_info->framebuffer_addr;
