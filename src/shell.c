@@ -1332,15 +1332,19 @@ static void shell_cmd_gui(void) {
     terminal_write_line("[GUI] Attempting to switch to graphics mode...");
     
     /* Try to switch to graphics mode and show framebuffer */
+    /* This is safe - won't cause page faults if framebuffer is not available */
     graphics_show();
     
     if (graphics_is_mode_active()) {
         terminal_write_line("[GUI] Graphics mode activated!");
         terminal_write_line("[GUI] Framebuffer copied to video memory.");
-        terminal_write_line("[GUI] Note: If screen is blank, VBE mode may need BIOS setup.");
+        terminal_write_line("[GUI] Note: Graphics should be visible on screen.");
     } else {
-        terminal_write_line("[GUI] Note: Framebuffer is in memory.");
-        terminal_write_line("[GUI]       VBE mode switching requires BIOS calls.");
+        terminal_write_line("[GUI] Note: Framebuffer is in memory only.");
+        terminal_write_line("[GUI]       Multiboot framebuffer not available.");
+        terminal_write_line("[GUI]       To enable graphics display:");
+        terminal_write_line("[GUI]       1. Ensure GRUB is configured with framebuffer");
+        terminal_write_line("[GUI]       2. Or use QEMU with -vga std option");
         terminal_write_line("[GUI]       Graphics context is ready for use.");
     }
     

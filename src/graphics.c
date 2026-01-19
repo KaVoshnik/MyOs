@@ -395,26 +395,19 @@ int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
     
     /* Try to get framebuffer from Multiboot info */
     if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag (bit 12) */
-        video_framebuffer = (uint32_t *)(uintptr_t)mb_info->framebuffer_addr;
+        uint64_t fb_addr = mb_info->framebuffer_addr;
         
-        if (video_framebuffer && mb_info->framebuffer_addr != 0) {
+        if (fb_addr != 0) {
+            video_framebuffer = (uint32_t *)(uintptr_t)fb_addr;
             graphics_mode_active = 1;
             return 0;
         }
     }
     
-    /* Fallback: try known addresses (for QEMU without Multiboot framebuffer) */
-    uint32_t *possible_addresses[] = {
-        (uint32_t *)0xE0000000,  /* Common QEMU VBE framebuffer */
-        (uint32_t *)0xFD000000,  /* Another possible address */
-    };
-    
-    for (size_t i = 0; i < sizeof(possible_addresses) / sizeof(possible_addresses[0]); i++) {
-        video_framebuffer = possible_addresses[i];
-        graphics_mode_active = 1;
-        return 0;
-    }
-    
+    /* Don't use fallback addresses - they may not exist and cause page faults */
+    /* Instead, return error and let user know framebuffer is not available */
+    graphics_mode_active = 0;
+    video_framebuffer = NULL;
     return -1;  /* No framebuffer found */
 }
 
@@ -428,10 +421,21 @@ void graphics_flush(void) {
         return;
     }
     
-    /* Copy framebuffer to video memory */
-    size_t size = gfx_ctx.width * gfx_ctx.height;
-    for (size_t i = 0; i < size; i++) {
-        video_framebuffer[i] = gfx_ctx.framebuffer[i];
+    /* Only copy if we have valid video framebuffer from Multiboot */
+    /* Don't try to write to arbitrary addresses - it causes page faults */
+    if (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0) {
+        size_t size = gfx_ctx.width * gfx_ctx.height;
+        size_t max_size = mb_info->framebuffer_width * mb_info->framebuffer_height;
+        
+        /* Don't copy more than available */
+        if (size > max_size) {
+            size = max_size;
+        }
+        
+        /* Copy framebuffer to video memory */
+        for (size_t i = 0; i < size; i++) {
+            video_framebuffer[i] = gfx_ctx.framebuffer[i];
+        }
     }
 }
 
@@ -445,11 +449,13 @@ void graphics_show(void) {
         return;
     }
     
-    /* Set video mode */
-    graphics_set_video_mode(gfx_ctx.width, gfx_ctx.height, gfx_ctx.bpp);
+    /* Set video mode - this will only succeed if Multiboot provides framebuffer */
+    int result = graphics_set_video_mode(gfx_ctx.width, gfx_ctx.height, gfx_ctx.bpp);
     
-    /* Copy framebuffer to screen */
-    graphics_flush();
+    /* Only copy framebuffer if video mode was successfully set */
+    if (result == 0) {
+        graphics_flush();
+    }
 }
 
 void graphics_demo(void) {
