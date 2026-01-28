@@ -224,30 +224,38 @@ static void terminal_newline(void) {
 }
 
 static enum terminal_color ansi_to_terminal_color(int ansi_code, int is_bright) {
-    /* ANSI colors: 30-37 normal, 90-97 bright */
+    /* ANSI colors:
+     *  30-37  normal  (black, red, green, yellow, blue, magenta, cyan, white)
+     *  90-97  bright  (bright black..bright white)
+     */
     int base = ansi_code % 10;
-    if (is_bright && base < 8) {
-        base += 8; /* Convert to bright colors */
-    }
-    
-    switch (base) {
-        case 0: return TERMINAL_COLOR_BLACK;
-        case 1: return TERMINAL_COLOR_BLUE;
-        case 2: return TERMINAL_COLOR_GREEN;
-        case 3: return TERMINAL_COLOR_CYAN;
-        case 4: return TERMINAL_COLOR_RED;
-        case 5: return TERMINAL_COLOR_MAGENTA;
-        case 6: return TERMINAL_COLOR_BROWN;
-        case 7: return TERMINAL_COLOR_LIGHT_GREY;
-        case 8: return TERMINAL_COLOR_DARK_GREY;
-        case 9: return TERMINAL_COLOR_LIGHT_BLUE;
-        case 10: return TERMINAL_COLOR_LIGHT_GREEN;
-        case 11: return TERMINAL_COLOR_LIGHT_CYAN;
-        case 12: return TERMINAL_COLOR_LIGHT_RED;
-        case 13: return TERMINAL_COLOR_LIGHT_MAGENTA;
-        case 14: return TERMINAL_COLOR_LIGHT_BROWN;
-        case 15: return TERMINAL_COLOR_WHITE;
-        default: return TERMINAL_COLOR_LIGHT_GREY;
+
+    if (!is_bright) {
+        /* Нормальные (неяркие) цвета 30–37 / 40–47 */
+        switch (base) {
+            case 0: return TERMINAL_COLOR_BLACK;
+            case 1: return TERMINAL_COLOR_RED;
+            case 2: return TERMINAL_COLOR_GREEN;
+            case 3: return TERMINAL_COLOR_BROWN;       /* ANSI yellow */
+            case 4: return TERMINAL_COLOR_BLUE;
+            case 5: return TERMINAL_COLOR_MAGENTA;
+            case 6: return TERMINAL_COLOR_CYAN;
+            case 7: return TERMINAL_COLOR_LIGHT_GREY;  /* ANSI white */
+            default: return TERMINAL_COLOR_LIGHT_GREY;
+        }
+    } else {
+        /* Яркие цвета 90–97 / 100–107 */
+        switch (base) {
+            case 0: return TERMINAL_COLOR_DARK_GREY;       /* bright black */
+            case 1: return TERMINAL_COLOR_LIGHT_RED;       /* bright red   */
+            case 2: return TERMINAL_COLOR_LIGHT_GREEN;     /* bright green */
+            case 3: return TERMINAL_COLOR_LIGHT_BROWN;     /* bright yellow */
+            case 4: return TERMINAL_COLOR_LIGHT_BLUE;      /* bright blue  */
+            case 5: return TERMINAL_COLOR_LIGHT_MAGENTA;   /* bright magenta */
+            case 6: return TERMINAL_COLOR_LIGHT_CYAN;      /* bright cyan  */
+            case 7: return TERMINAL_COLOR_WHITE;           /* bright white */
+            default: return TERMINAL_COLOR_LIGHT_GREY;
+        }
     }
 }
 
