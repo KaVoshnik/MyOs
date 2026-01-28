@@ -1439,7 +1439,6 @@ static void shell_cmd_gui(void) {
 }
 
 static void shell_cmd_myfetch(void) {
-    /* ASCII art logo with ⌘ symbol */
     terminal_write("\x1B[1;36m");  /* Bold cyan color */
     terminal_write_line("                   ____      ");
     terminal_write_line("                  / __ \\     ");
