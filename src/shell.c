@@ -1441,15 +1441,14 @@ static void shell_cmd_gui(void) {
 static void shell_cmd_myfetch(void) {
     /* ASCII art logo with ⌘ symbol */
     terminal_write("\x1B[1;36m");  /* Bold cyan color */
-    terminal_write_line("     ╔═══════════╗");
-    terminal_write_line("    ║             ║");
-    terminal_write_line("   ║               ║");
-    terminal_write_line("  ║                 ║");
-    terminal_write_line(" ║        ⌘        ║");
-    terminal_write_line("  ║                 ║");
-    terminal_write_line("   ║               ║");
-    terminal_write_line("    ║             ║");
-    terminal_write_line("     ╚═══════════╝");
+    terminal_write_line("                   ____      ");
+    terminal_write_line("                  / __ \\     ");
+    terminal_write_line("  _ __ ___  _   _| |  | |___ ");
+    terminal_write_line(" | '_ ` _ \\| | | | |  | / __|");
+    terminal_write_line(" | | | | | | |_| | |__| \\__ \\");
+    terminal_write_line(" |_| |_| |_|\\__, |\\____/|___/");
+    terminal_write_line("             __/ |           ");
+    terminal_write_line("            |___/            ");
     terminal_write("\x1B[0m");  /* Reset color */
     terminal_write_line("");
     
