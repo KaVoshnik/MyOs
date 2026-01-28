@@ -3,6 +3,7 @@
 #include <io.h>
 #include <stdint.h>
 #include <memory.h>
+#include <serial.h>
 
 static volatile uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
 static const size_t VGA_WIDTH = 80;
@@ -546,6 +547,9 @@ static int terminal_parse_ansi_sequence(const char **data_ptr) {
 }
 
 void terminal_putc(char c) {
+    /* Mirror output to serial for headless debugging */
+    serial_write_char(c);
+
     /* If we're in scroll mode and user types, return to bottom */
     if (terminal_in_scroll_mode && c != '\b') {
         terminal_scroll_to_bottom();

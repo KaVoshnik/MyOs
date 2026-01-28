@@ -1,7 +1,7 @@
 #include <system.h>
 #include <io.h>
 
-void system_halt(void) {
+__attribute__((noreturn)) void system_halt(void) {
     while (1) {
         __asm__ volatile("cli; hlt");
     }

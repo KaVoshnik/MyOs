@@ -12,6 +12,9 @@
 #include <process.h>
 #include <user.h>
 #include <login.h>
+#include <pci.h>
+#include <serial.h>
+#include <rtl8139.h>
 
 extern uint8_t _kernel_end;
 
@@ -54,6 +57,7 @@ void kernel_main(uint64_t multiboot_info_ptr) {
     if (multiboot_info_ptr != 0) {
         mb_info = (struct multiboot_info *)multiboot_info_ptr;
     }
+    serial_init();
     terminal_initialize();
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
     terminal_write_line("Welcome to MyOs!");
@@ -73,6 +77,9 @@ void kernel_main(uint64_t multiboot_info_ptr) {
     process_system_init();
     
     interrupts_enable();
+
+    pci_scan_and_print();
+    rtl8139_init();
 
     ata_init();
     if (ata_is_available()) {
