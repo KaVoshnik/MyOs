@@ -12,6 +12,7 @@
 #include <user.h>
 #include <mouse.h>
 #include <graphics.h>
+#include <rtl8139.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -1450,8 +1451,8 @@ static void shell_cmd_myfetch(void) {
     terminal_write_line("            |___/            ");
     terminal_write("\x1B[0m");  /* Reset color */
     terminal_write_line("");
-    
-    terminal_write("\x1B[1;36m");  /* Bold cyan */
+
+        terminal_write("\x1B[1;36m");  /* Bold cyan */
     terminal_write("OS:        ");
     terminal_write("\x1B[0m");
     terminal_write("\x1B[32m");  /* Green */
@@ -1563,6 +1564,52 @@ static void shell_cmd_myfetch(void) {
     terminal_write_line(path);
     
     terminal_write("\x1B[0m");  /* Reset color */
+}
+
+static void shell_cmd_nicinfo(void) {
+    const rtl8139_info_t *info = rtl8139_get_info();
+    if (!info || !info->present) {
+        terminal_write_line("nicinfo: RTL8139 not detected.");
+        return;
+    }
+
+    terminal_write_line("RTL8139 network interface:");
+
+    char buf[4];
+
+    terminal_write("  PCI bus=");
+    buf[0] = '0' + (info->bus / 10);
+    buf[1] = '0' + (info->bus % 10);
+    buf[2] = '\0';
+    terminal_write(buf);
+
+    terminal_write(" dev=");
+    buf[0] = '0' + (info->device / 10);
+    buf[1] = '0' + (info->device % 10);
+    buf[2] = '\0';
+    terminal_write(buf);
+
+    terminal_write(" fn=");
+    buf[0] = '0' + info->function;
+    buf[1] = '\0';
+    terminal_write_line(buf);
+
+    static const char hex[] = "0123456789ABCDEF";
+    char hbuf[5];
+
+    terminal_write("  IO base=0x");
+    hbuf[0] = hex[(info->io_base >> 12) & 0xF];
+    hbuf[1] = hex[(info->io_base >> 8) & 0xF];
+    hbuf[2] = hex[(info->io_base >> 4) & 0xF];
+    hbuf[3] = hex[info->io_base & 0xF];
+    hbuf[4] = '\0';
+    terminal_write(hbuf);
+
+    terminal_write(" irq=");
+    buf[0] = '0' + (info->irq_line / 10);
+    buf[1] = '0' + (info->irq_line % 10);
+    buf[2] = '\0';
+    terminal_write_line(buf);
 }
 
 static void shell_cmd_hexdump(const char *args) {
@@ -2374,6 +2421,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "nicinfo")) != NULL) {
+        (void)args;
+        shell_cmd_nicinfo();
+        return;
+    }
+
     if ((args = shell_match_command(line, "cp")) != NULL) {
         shell_cmd_cp(args);
         return;
@@ -2498,7 +2551,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "gui", "myfetch", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "nicinfo", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
