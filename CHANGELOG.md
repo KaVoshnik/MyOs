@@ -2,9 +2,6 @@
 
 Все значимые изменения в проекте MyOs документируются в этом файле.
 
-Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
-и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
-
 ## [1.2.0] - 2026-01-28
 
 ### Добавлено
@@ -48,8 +45,3 @@
 ### Изменено
 - Улучшена файловая система с персистентностью
 - Расширена система потоков
-
----
-
-[1.2.0]: https://github.com/KaVoshnik/MyOs/releases/tag/v1.2.0
-[1.1.0]: https://github.com/KaVoshnik/MyOs/releases/tag/v1.1.0
