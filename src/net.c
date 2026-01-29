@@ -75,6 +75,7 @@ static struct {
 static uint8_t g_mac[6];
 static uint32_t g_ip_host;      /* 10.0.2.15 */
 static uint32_t g_gw_ip_host;   /* 10.0.2.2  */
+static uint32_t g_netmask_host; /* 255.255.255.0 */
 
 static volatile int g_ping_got_reply = 0;
 static uint16_t g_ping_ident = 0x1234;
@@ -93,7 +94,7 @@ static void net_send_eth(const uint8_t dst_mac[6], uint16_t ethertype, const voi
     (void)rtl8139_send_frame(frame, sizeof(eth_hdr_t) + len);
 }
 
-static void arp_send_request(uint32_t target_ip_be) {
+static void arp_send_request(uint32_t target_ip_host) {
     arp_pkt_t arp;
     memset(&arp, 0, sizeof(arp));
     arp.htype = htons(1);
@@ -104,7 +105,7 @@ static void arp_send_request(uint32_t target_ip_be) {
     memcpy(arp.sha, g_mac, 6);
     arp.spa = htonl(g_ip_host);
     /* tha zeros */
-    arp.tpa = htonl(target_ip_be);
+    arp.tpa = htonl(target_ip_host);
 
     static const uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
     net_send_eth(bcast, ETH_TYPE_ARP, &arp, sizeof(arp));
@@ -113,7 +114,7 @@ static void arp_send_request(uint32_t target_ip_be) {
     /* quick hex */
     static const char hex[] = "0123456789ABCDEF";
     char h[9];
-    uint32_t v = target_ip_be;
+    uint32_t v = target_ip_host;
     for (int i = 7; i >= 0; --i) {
         h[i] = hex[v & 0xF];
         v >>= 4;
@@ -178,6 +179,12 @@ static void arp_handle(const arp_pkt_t *arp) {
 }
 
 static int arp_resolve(uint32_t ip_host, uint8_t out_mac[6], uint32_t timeout_ms) {
+    /* Resolve self without ARP */
+    if (ip_host == g_ip_host) {
+        memcpy(out_mac, g_mac, 6);
+        return 1;
+    }
+
     if (arp_cache.valid && arp_cache.ip_host == ip_host) {
         memcpy(out_mac, arp_cache.mac, 6);
         return 1;
@@ -316,9 +323,10 @@ void net_init(void) {
     }
     memcpy(g_mac, info->mac, 6);
 
-    /* QEMU usernet defaults (host order) */
-    g_ip_host = 0x0A00020Fu;   /* 10.0.2.15 */
-    g_gw_ip_host = 0x0A000202u;/* 10.0.2.2  */
+    /* QEMU usernet defaults (host byte order on x86_64 = little-endian) */
+    g_ip_host = 10u | (0u << 8) | (2u << 16) | (15u << 24);   /* 10.0.2.15 */
+    g_gw_ip_host = 10u | (0u << 8) | (2u << 16) | (2u << 24); /* 10.0.2.2  */
+    g_netmask_host = 0x00FFFFFFu; /* 255.255.255.0 in little-endian host order */
 
     arp_cache.valid = 0;
     g_ping_got_reply = 0;
@@ -333,9 +341,22 @@ void net_poll(void) {
 
 int net_ping(uint32_t dst_ip_host, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
     if (rtt_ms_out) *rtt_ms_out = 0;
+
+    /* Loopback: ping own IP without NIC/ARP */
+    if (dst_ip_host == g_ip_host) {
+        g_ping_got_reply = 1;
+        if (rtt_ms_out) *rtt_ms_out = 0;
+        return 0;
+    }
+
+    /* Route: if destination is not on-link, send via default gateway */
+    uint32_t next_hop_ip =
+        ((dst_ip_host & g_netmask_host) == (g_ip_host & g_netmask_host))
+            ? dst_ip_host
+            : g_gw_ip_host;
     
     uint8_t dst_mac[6];
-    if (!arp_resolve(dst_ip_host, dst_mac, timeout_ms)) {
+    if (!arp_resolve(next_hop_ip, dst_mac, timeout_ms)) {
         return -1;
     }
 
@@ -419,8 +440,9 @@ int net_parse_ipv4(const char *s, uint32_t *out_ip_host) {
     }
     if (!have || part != 3) return 0;
     parts[3] = acc;
-    uint32_t ip = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
-    *out_ip_host = ip;
+    /* host order on x86: least significant byte is first octet */
+    uint32_t ip_host = parts[0] | (parts[1] << 8) | (parts[2] << 16) | (parts[3] << 24);
+    *out_ip_host = ip_host;
     return 1;
 }
 

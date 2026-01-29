@@ -14,6 +14,15 @@ typedef struct {
     uint8_t mac[6];
 } rtl8139_info_t;
 
+typedef struct {
+    uint8_t cr;
+    uint16_t capr;
+    uint16_t cbr;
+    uint16_t isr;
+    uint16_t imr;
+    uint32_t rcr;
+} rtl8139_regs_t;
+
 void rtl8139_init(void);
 const rtl8139_info_t *rtl8139_get_info(void);
 
@@ -25,6 +34,9 @@ int rtl8139_send_frame(const void *data, size_t len);
 
 /* Принять/обработать входящие кадры (polling), печатает краткий дамп. */
 int rtl8139_poll_rx(int max_frames);
+
+/* Прочитать ключевые регистры RTL8139 (для отладки). Возвращает 1 при успехе. */
+int rtl8139_get_regs(rtl8139_regs_t *out);
 
 #endif /* _MYOS_RTL8139_H */
 

@@ -1613,6 +1613,66 @@ static void shell_cmd_nicinfo(void) {
     terminal_write_line(buf);
 }
 
+static void shell_cmd_nicregs(void) {
+    rtl8139_regs_t r;
+    if (!rtl8139_get_regs(&r)) {
+        terminal_write_line("nicregs: RTL8139 not detected.");
+        return;
+    }
+    static const char hex[] = "0123456789ABCDEF";
+    char h16[5];
+    char h32[9];
+
+    terminal_write_line("RTL8139 regs:");
+
+    terminal_write("  CR=0x");
+    h16[0] = hex[(r.cr >> 4) & 0xF];
+    h16[1] = hex[r.cr & 0xF];
+    h16[2] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  CAPR=0x");
+    h16[0] = hex[(r.capr >> 12) & 0xF];
+    h16[1] = hex[(r.capr >> 8) & 0xF];
+    h16[2] = hex[(r.capr >> 4) & 0xF];
+    h16[3] = hex[r.capr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  CBR=0x");
+    h16[0] = hex[(r.cbr >> 12) & 0xF];
+    h16[1] = hex[(r.cbr >> 8) & 0xF];
+    h16[2] = hex[(r.cbr >> 4) & 0xF];
+    h16[3] = hex[r.cbr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  ISR=0x");
+    h16[0] = hex[(r.isr >> 12) & 0xF];
+    h16[1] = hex[(r.isr >> 8) & 0xF];
+    h16[2] = hex[(r.isr >> 4) & 0xF];
+    h16[3] = hex[r.isr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  IMR=0x");
+    h16[0] = hex[(r.imr >> 12) & 0xF];
+    h16[1] = hex[(r.imr >> 8) & 0xF];
+    h16[2] = hex[(r.imr >> 4) & 0xF];
+    h16[3] = hex[r.imr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  RCR=0x");
+    uint32_t v = r.rcr;
+    for (int i = 7; i >= 0; --i) {
+        h32[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    h32[8] = '\0';
+    terminal_write_line(h32);
+}
+
 static void shell_cmd_netdump(void) {
     int count = rtl8139_poll_rx(16);
     terminal_write("netdump: processed ");
@@ -1636,10 +1696,10 @@ static void shell_cmd_ping(const char *args) {
     /* Print IP in readable format */
     terminal_write("PING ");
     char ip_buf[16];
-    uint32_t a = (ip_host >> 24) & 0xFF;
-    uint32_t b = (ip_host >> 16) & 0xFF;
-    uint32_t c = (ip_host >> 8) & 0xFF;
-    uint32_t d = ip_host & 0xFF;
+    uint32_t a = ip_host & 0xFF;
+    uint32_t b = (ip_host >> 8) & 0xFF;
+    uint32_t c = (ip_host >> 16) & 0xFF;
+    uint32_t d = (ip_host >> 24) & 0xFF;
     int pos = 0;
     if (a >= 100) ip_buf[pos++] = (char)('0' + (a / 100));
     if (a >= 10) ip_buf[pos++] = (char)('0' + ((a / 10) % 10));
@@ -2490,6 +2550,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "nicregs")) != NULL) {
+        (void)args;
+        shell_cmd_nicregs();
+        return;
+    }
+
     if ((args = shell_match_command(line, "netdump")) != NULL) {
         (void)args;
         shell_cmd_netdump();
@@ -2625,7 +2691,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "gui", "myfetch", "nicinfo", "netdump", "ping", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "nicinfo", "nicregs", "netdump", "ping", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {

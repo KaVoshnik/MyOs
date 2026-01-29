@@ -234,7 +234,12 @@ void rtl8139_init(void) {
 
     /* Disable interrupts for now (polling) */
     outw((uint16_t)(rtl_io() + RTL_IMR), 0x0000);
+    /* Clear any pending interrupts/status */
     outw((uint16_t)(rtl_io() + RTL_ISR), 0xFFFF);
+
+    /* Important for RX ring logic: CAPR is "current address of packet read".
+       Many implementations initialize it to 0xFFF0 so that (CAPR + 16) == 0 at start. */
+    outw((uint16_t)(rtl_io() + RTL_CAPR), 0xFFF0);
 
     /* Debug-friendly: accept all packet types + enable wrap */
     uint32_t rcr = 0x0Fu | (1u << 7);
@@ -299,8 +304,9 @@ int rtl8139_poll_rx(int max_frames) {
             rtl_rx_offset = 0;
         }
 
-        uint16_t status = *(uint16_t *)(rtl_rx_buf + off);
-        uint16_t length = *(uint16_t *)(rtl_rx_buf + off + 2);
+        /* RX buffer is DMA'd by the NIC, keep reads volatile */
+        uint16_t status = *(volatile uint16_t *)(rtl_rx_buf + off);
+        uint16_t length = *(volatile uint16_t *)(rtl_rx_buf + off + 2);
         off += 4;
 
         if (length == 0 || length > 0x2000) {
@@ -355,5 +361,18 @@ int rtl8139_poll_rx(int max_frames) {
     }
 
     return processed;
+}
+
+int rtl8139_get_regs(rtl8139_regs_t *out) {
+    if (!out || !g_rtl8139.present) {
+        return 0;
+    }
+    out->cr = inb((uint16_t)(rtl_io() + RTL_CR));
+    out->capr = inw((uint16_t)(rtl_io() + RTL_CAPR));
+    out->cbr = inw((uint16_t)(rtl_io() + RTL_CBR));
+    out->isr = inw((uint16_t)(rtl_io() + RTL_ISR));
+    out->imr = inw((uint16_t)(rtl_io() + RTL_IMR));
+    out->rcr = inl((uint16_t)(rtl_io() + RTL_RCR));
+    return 1;
 }
 
