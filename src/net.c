@@ -4,11 +4,7 @@
 #include <pit.h>
 #include <string.h>
 
-/* Simple htons/ntohs helpers (we store IPs as big-endian on the wire). */
-static uint16_t bswap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
-static uint16_t htons(uint16_t v) { return bswap16(v); }
-static uint16_t ntohs(uint16_t v) { return bswap16(v); }
-
+/* Endianness helpers are in net.h */
 static uint16_t checksum16(const void *data, size_t len) {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t sum = 0;
@@ -72,13 +68,13 @@ typedef struct __attribute__((packed)) {
 /* Very small ARP cache: only one entry for now (gateway/target) */
 static struct {
     uint8_t valid;
-    uint32_t ip_be;
+    uint32_t ip_host;
     uint8_t mac[6];
 } arp_cache;
 
 static uint8_t g_mac[6];
-static uint32_t g_ip_be;      /* 10.0.2.15 */
-static uint32_t g_gw_ip_be;   /* 10.0.2.2  */
+static uint32_t g_ip_host;      /* 10.0.2.15 */
+static uint32_t g_gw_ip_host;   /* 10.0.2.2  */
 
 static volatile int g_ping_got_reply = 0;
 static uint16_t g_ping_ident = 0x1234;
@@ -106,12 +102,25 @@ static void arp_send_request(uint32_t target_ip_be) {
     arp.plen = 4;
     arp.oper = htons(1);
     memcpy(arp.sha, g_mac, 6);
-    arp.spa = g_ip_be;
+    arp.spa = htonl(g_ip_host);
     /* tha zeros */
-    arp.tpa = target_ip_be;
+    arp.tpa = htonl(target_ip_be);
 
     static const uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
     net_send_eth(bcast, ETH_TYPE_ARP, &arp, sizeof(arp));
+    terminal_write("[net][arp] who-has ");
+    terminal_write("0x");
+    /* quick hex */
+    static const char hex[] = "0123456789ABCDEF";
+    char h[9];
+    uint32_t v = target_ip_be;
+    for (int i = 7; i >= 0; --i) {
+        h[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    h[8] = '\0';
+    terminal_write(h);
+    terminal_write_line(" (sent)");
 }
 
 static void arp_handle(const arp_pkt_t *arp) {
@@ -120,13 +129,39 @@ static void arp_handle(const arp_pkt_t *arp) {
     }
     uint16_t op = ntohs(arp->oper);
 
+    uint32_t spa_host = ntohl(arp->spa);
+    uint32_t tpa_host = ntohl(arp->tpa);
+
     /* Cache sender */
     arp_cache.valid = 1;
-    arp_cache.ip_be = arp->spa;
+    arp_cache.ip_host = spa_host;
     memcpy(arp_cache.mac, arp->sha, 6);
 
+    terminal_write("[net][arp] op=");
+    terminal_write(op == 1 ? "req" : (op == 2 ? "rep" : "unk"));
+    terminal_write(" spa=0x");
+    static const char hex[] = "0123456789ABCDEF";
+    char h[9];
+    uint32_t v = spa_host;
+    for (int i = 7; i >= 0; --i) {
+        h[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    h[8] = '\0';
+    terminal_write(h);
+    terminal_write(" sha=");
+    for (int i = 0; i < 6; ++i) {
+        char b[3];
+        b[0] = hex[(arp->sha[i] >> 4) & 0xF];
+        b[1] = hex[arp->sha[i] & 0xF];
+        b[2] = '\0';
+        terminal_write(b);
+        if (i != 5) terminal_write(":");
+    }
+    terminal_write_line("");
+
     /* If it's a request for our IP, reply */
-    if (op == 1 && arp->tpa == g_ip_be) {
+    if (op == 1 && tpa_host == g_ip_host) {
         arp_pkt_t reply;
         memset(&reply, 0, sizeof(reply));
         reply.htype = htons(1);
@@ -135,21 +170,21 @@ static void arp_handle(const arp_pkt_t *arp) {
         reply.plen = 4;
         reply.oper = htons(2);
         memcpy(reply.sha, g_mac, 6);
-        reply.spa = g_ip_be;
+        reply.spa = htonl(g_ip_host);
         memcpy(reply.tha, arp->sha, 6);
-        reply.tpa = arp->spa;
+        reply.tpa = htonl(spa_host);
         net_send_eth(arp->sha, ETH_TYPE_ARP, &reply, sizeof(reply));
     }
 }
 
-static int arp_resolve(uint32_t ip_be, uint8_t out_mac[6], uint32_t timeout_ms) {
-    if (arp_cache.valid && arp_cache.ip_be == ip_be) {
+static int arp_resolve(uint32_t ip_host, uint8_t out_mac[6], uint32_t timeout_ms) {
+    if (arp_cache.valid && arp_cache.ip_host == ip_host) {
         memcpy(out_mac, arp_cache.mac, 6);
         return 1;
     }
 
     /* Ask */
-    arp_send_request(ip_be);
+    arp_send_request(ip_host);
 
     uint64_t start = pit_seconds();
     uint32_t timeout_s = (timeout_ms + 999) / 1000;
@@ -157,11 +192,34 @@ static int arp_resolve(uint32_t ip_be, uint8_t out_mac[6], uint32_t timeout_ms) 
 
     while ((uint32_t)(pit_seconds() - start) < timeout_s) {
         net_poll();
-        if (arp_cache.valid && arp_cache.ip_be == ip_be) {
+        if (arp_cache.valid && arp_cache.ip_host == ip_host) {
             memcpy(out_mac, arp_cache.mac, 6);
             return 1;
         }
     }
+    terminal_write("[net][arp] resolve failed req=0x");
+    static const char hex[] = "0123456789ABCDEF";
+    char h[9];
+    uint32_t v = ip_host;
+    for (int i = 7; i >= 0; --i) {
+        h[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    h[8] = '\0';
+    terminal_write(h);
+    if (arp_cache.valid) {
+        terminal_write(" cache=0x");
+        v = arp_cache.ip_host;
+        for (int i = 7; i >= 0; --i) {
+            h[i] = hex[v & 0xF];
+            v >>= 4;
+        }
+        h[8] = '\0';
+        terminal_write(h);
+    } else {
+        terminal_write(" cache=<empty>");
+    }
+    terminal_write_line("");
     return 0;
 }
 
@@ -189,7 +247,7 @@ static void icmp_handle(const ipv4_hdr_t *ip, const uint8_t *payload, size_t pay
 
         /* send IPv4 back to sender */
         uint8_t dst_mac[6];
-        if (!arp_resolve(ip->src, dst_mac, 1000)) return;
+        if (!arp_resolve(ntohl(ip->src), dst_mac, 1000)) return;
 
         ipv4_hdr_t iph;
         iph.ver_ihl = 0x45;
@@ -200,8 +258,8 @@ static void icmp_handle(const ipv4_hdr_t *ip, const uint8_t *payload, size_t pay
         iph.ttl = 64;
         iph.proto = 1;
         iph.hdr_csum = 0;
-        iph.src = g_ip_be;
-        iph.dst = ip->src;
+        iph.src = htonl(g_ip_host);
+        iph.dst = ip->src; /* already network order in received packet */
         iph.hdr_csum = checksum16(&iph, sizeof(iph));
 
         uint8_t pkt[1500];
@@ -216,7 +274,7 @@ static void ipv4_handle(const ipv4_hdr_t *ip, const uint8_t *payload, size_t pay
     uint8_t ihl = (uint8_t)(ip->ver_ihl & 0x0F);
     if (ihl < 5) return;
     if ((ip->ver_ihl >> 4) != 4) return;
-    if (ip->dst != g_ip_be) return;
+    if (ntohl(ip->dst) != g_ip_host) return;
 
     if (ip->proto == 1) {
         icmp_handle(ip, payload, payload_len);
@@ -258,9 +316,9 @@ void net_init(void) {
     }
     memcpy(g_mac, info->mac, 6);
 
-    /* QEMU usernet defaults */
-    g_ip_be = htonl(0x0A00020Fu);   /* 10.0.2.15 */
-    g_gw_ip_be = htonl(0x0A000202u);/* 10.0.2.2  */
+    /* QEMU usernet defaults (host order) */
+    g_ip_host = 0x0A00020Fu;   /* 10.0.2.15 */
+    g_gw_ip_host = 0x0A000202u;/* 10.0.2.2  */
 
     arp_cache.valid = 0;
     g_ping_got_reply = 0;
@@ -273,11 +331,11 @@ void net_poll(void) {
     (void)rtl8139_poll_rx(8);
 }
 
-int net_ping(uint32_t dst_ip_be, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
+int net_ping(uint32_t dst_ip_host, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
     if (rtt_ms_out) *rtt_ms_out = 0;
     
     uint8_t dst_mac[6];
-    if (!arp_resolve(dst_ip_be, dst_mac, timeout_ms)) {
+    if (!arp_resolve(dst_ip_host, dst_mac, timeout_ms)) {
         return -1;
     }
 
@@ -306,8 +364,8 @@ int net_ping(uint32_t dst_ip_be, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
     ip.ttl = 64;
     ip.proto = 1;
     ip.hdr_csum = 0;
-    ip.src = g_ip_be;
-    ip.dst = dst_ip_be;
+    ip.src = htonl(g_ip_host);
+    ip.dst = htonl(dst_ip_host);
     ip.hdr_csum = checksum16(&ip, sizeof(ip));
 
     uint8_t pkt[1500];
@@ -336,8 +394,8 @@ int net_ping(uint32_t dst_ip_be, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
     return -2;
 }
 
-int net_parse_ipv4(const char *s, uint32_t *out_ip_be) {
-    if (!s || !out_ip_be) return 0;
+int net_parse_ipv4(const char *s, uint32_t *out_ip_host) {
+    if (!s || !out_ip_host) return 0;
     uint32_t parts[4] = {0,0,0,0};
     int part = 0;
     uint32_t acc = 0;
@@ -362,7 +420,7 @@ int net_parse_ipv4(const char *s, uint32_t *out_ip_be) {
     if (!have || part != 3) return 0;
     parts[3] = acc;
     uint32_t ip = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
-    *out_ip_be = htonl(ip);
+    *out_ip_host = ip;
     return 1;
 }
 

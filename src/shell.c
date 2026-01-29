@@ -1627,14 +1627,13 @@ static void shell_cmd_ping(const char *args) {
         terminal_write_line("Example: ping 10.0.2.2");
         return;
     }
-    uint32_t ip_be = 0;
-    if (!net_parse_ipv4(ip_str, &ip_be)) {
+    uint32_t ip_host = 0;
+    if (!net_parse_ipv4(ip_str, &ip_host)) {
         terminal_write_line("ping: invalid IP (use a.b.c.d).");
         return;
     }
     
     /* Print IP in readable format */
-    uint32_t ip_host = htonl(ip_be);
     terminal_write("PING ");
     char ip_buf[16];
     uint32_t a = (ip_host >> 24) & 0xFF;
@@ -1662,7 +1661,7 @@ static void shell_cmd_ping(const char *args) {
     terminal_write_line("...");
     
     uint32_t rtt_ms = 0;
-    int r = net_ping(ip_be, 2000, &rtt_ms);
+    int r = net_ping(ip_host, 2000, &rtt_ms);
     if (r == 0) {
         terminal_write("Reply from ");
         terminal_write(ip_buf);

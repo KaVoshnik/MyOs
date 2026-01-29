@@ -236,8 +236,8 @@ void rtl8139_init(void) {
     outw((uint16_t)(rtl_io() + RTL_IMR), 0x0000);
     outw((uint16_t)(rtl_io() + RTL_ISR), 0xFFFF);
 
-    /* Accept broadcast + physical match, enable wrap */
-    uint32_t rcr = (1u << 1) | (1u << 3) | (1u << 7);
+    /* Debug-friendly: accept all packet types + enable wrap */
+    uint32_t rcr = 0x0Fu | (1u << 7);
     outl((uint16_t)(rtl_io() + RTL_RCR), rcr);
 
     /* Enable RX/TX */
@@ -253,16 +253,21 @@ int rtl8139_send_frame(const void *data, size_t len) {
     if (!g_rtl8139.present || !rtl_tx_buf || len == 0 || len > 1518) {
         return -1;
     }
-    if (len > rtl_tx_buf_size) {
+    /* Ethernet minimum payload (without FCS) is 60 bytes */
+    size_t wire_len = (len < 60) ? 60 : len;
+    if (wire_len > rtl_tx_buf_size) {
         return -2;
     }
     memcpy(rtl_tx_buf, data, len);
+    if (wire_len > len) {
+        memset(rtl_tx_buf + len, 0, wire_len - len);
+    }
 
     /* Clear status bits by reading */
     (void)inl((uint16_t)(rtl_io() + RTL_TSD0));
 
     /* Write length to TSD0 kicks transmission */
-    outl((uint16_t)(rtl_io() + RTL_TSD0), (uint32_t)len);
+    outl((uint16_t)(rtl_io() + RTL_TSD0), (uint32_t)wire_len);
 
     /* Poll completion with bounded wait */
     for (uint32_t i = 0; i < 1000000u; ++i) {
@@ -282,9 +287,8 @@ int rtl8139_poll_rx(int max_frames) {
     int processed = 0;
 
     while (processed < max_frames) {
-        uint16_t cbr = inw((uint16_t)(rtl_io() + RTL_CBR));
-        /* If current buffer write pointer equals our offset, nothing new */
-        if (cbr == (uint16_t)rtl_rx_offset) {
+        /* CR bit0 = RX buffer empty */
+        if (inb((uint16_t)(rtl_io() + RTL_CR)) & 0x01u) {
             break;
         }
 
@@ -312,15 +316,28 @@ int rtl8139_poll_rx(int max_frames) {
         } else {
             /* length includes CRC; drop CRC (4 bytes) if present */
             size_t frame_len = (length >= 4) ? (size_t)(length - 4) : (size_t)length;
-            if (off + frame_len <= RTL_RX_BUF_SIZE) {
-                const uint8_t *frame = rtl_rx_buf + off;
+            const uint8_t *frame = rtl_rx_buf + off;
+
+            /* Handle wrap-around by copying into a temporary buffer */
+            uint8_t tmp[1600];
+            if (frame_len > sizeof(tmp)) {
+                terminal_write_line("  [rx] frame too large");
+            } else if (off + frame_len <= RTL_RX_BUF_SIZE) {
                 if (rtl_rx_handler) {
                     rtl_rx_handler(frame, frame_len, rtl_rx_user);
                 } else {
                     rtl_dump_frame_brief(frame, frame_len);
                 }
             } else {
-                terminal_write_line("  [rx] wrapped frame (not handled yet)");
+                size_t first = RTL_RX_BUF_SIZE - off;
+                size_t second = frame_len - first;
+                memcpy(tmp, rtl_rx_buf + off, first);
+                memcpy(tmp + first, rtl_rx_buf, second);
+                if (rtl_rx_handler) {
+                    rtl_rx_handler(tmp, frame_len, rtl_rx_user);
+                } else {
+                    rtl_dump_frame_brief(tmp, frame_len);
+                }
             }
         }
 
