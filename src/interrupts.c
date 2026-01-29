@@ -5,6 +5,7 @@
 #include <pit.h>
 #include <keyboard.h>
 #include <mouse.h>
+#include <panic.h>
 
 #define IDT_ENTRY_COUNT 256
 #define IDT_TYPE_INTERRUPT_GATE 0x8E
@@ -143,9 +144,8 @@ static void exception_handler_common(uint8_t vector, uint64_t error_code) {
     terminal_write("Error code: 0x");
     print_hex64(error_code);
     terminal_write_line("");
-    for (;;) {
-        __asm__ volatile("cli; hlt");
-    }
+    /* Единая точка остановки: дальше можно расширить (дамп регистров/стека). */
+    panic(message, __FILE__, __LINE__);
 }
 
 #define DEFINE_ISR_NOERR(n) \

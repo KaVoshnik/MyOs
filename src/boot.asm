@@ -20,6 +20,9 @@ global start
 start:
     cli
     mov esp, stack_top
+    
+    ; Save multiboot info pointer (passed in EBX)
+    mov [multiboot_info], ebx
 
     lgdt [gdt_descriptor]
 
@@ -53,6 +56,9 @@ long_mode_entry:
     mov es, ax
     mov ss, ax
     mov rsp, stack_top
+    
+    ; Pass multiboot info to kernel
+    mov rdi, [multiboot_info]
 
     call kernel_main
 
@@ -93,6 +99,11 @@ pd_table:
     dq (i << 21) | 0x183        ; 1GiB identity (2MiB pages)
 %assign i i+1
 %endrep
+
+SECTION .data
+align 8
+multiboot_info:
+    dq 0
 
 SECTION .bss
 align 16

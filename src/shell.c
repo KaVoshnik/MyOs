@@ -11,6 +11,9 @@
 #include <process.h>
 #include <user.h>
 #include <mouse.h>
+#include <graphics.h>
+#include <rtl8139.h>
+#include <net.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -203,6 +206,9 @@ static void shell_cmd_help_1(void) {
     terminal_write_line("");
     terminal_write("  ");
     terminal_write("\x1B[32mansi\x1B[0m       - test ANSI escape sequences");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mgui\x1B[0m        - test graphics subsystem (demo)");
     terminal_write_line("");
     terminal_write_line("");
 }
@@ -1281,22 +1287,173 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
+/* Forward declaration of multiboot info structure */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t color_info[6];
+} __attribute__((packed));
+
+extern struct multiboot_info *mb_info;
+
+static void shell_cmd_gui(void) {
+    terminal_write_line("[GUI] Initializing graphics subsystem...");
+    
+    /* Show memory status */
+    size_t used = memory_bytes_used();
+    size_t total = memory_heap_size();
+    size_t free = (total > used) ? (total - used) : 0;
+    terminal_write("[GUI] Memory: ");
+    print_uint64(free / 1024);
+    terminal_write(" KiB free / ");
+    print_uint64(total / 1024);
+    terminal_write_line(" KiB total");
+    
+    /* Try to initialize graphics with 800x600x32 */
+    /* It will automatically fallback to smaller resolution if needed */
+    int result = graphics_init(800, 600, 32);
+    if (result != 0) {
+        terminal_write("\x1B[1;31m[ERROR]\x1B[0m ");
+        if (result == -1) {
+            terminal_write_line("Failed to allocate framebuffer (out of memory).");
+        } else if (result == -2) {
+            terminal_write_line("Not enough memory for framebuffer.");
+        } else {
+            terminal_write_line("Failed to initialize graphics.");
+        }
+        terminal_write("[GUI] Required: ~");
+        print_uint64((800 * 600 * 4) / 1024);
+        terminal_write(" KiB for 800x600x32");
+        terminal_write_line("");
+        terminal_write("[GUI] Available: ");
+        print_uint64(free / 1024);
+        terminal_write_line(" KiB");
+        terminal_write_line("[GUI] Note: Increase heap size in kernel.c to support larger resolutions.");
+        terminal_write_line("      Current heap: 4 MiB");
+        return;
+    }
+    
+    terminal_write_line("[GUI] Graphics initialized successfully!");
+    terminal_write_line("[GUI] Running demo...");
+    
+    /* Run demo */
+    graphics_demo();
+    
+    terminal_write_line("[GUI] Demo complete!");
+    
+    /* Check Multiboot framebuffer status */
+    if (mb_info) {
+        terminal_write("[GUI] Multiboot info available, flags: 0x");
+        char hex[] = "0123456789ABCDEF";
+        uint32_t flags = mb_info->flags;
+        for (int i = 28; i >= 0; i -= 4) {
+            terminal_putc(hex[(flags >> i) & 0xF]);
+        }
+        terminal_write_line("");
+        
+        if (mb_info->flags & (1 << 12)) {
+            terminal_write_line("[GUI] Multiboot framebuffer info available!");
+            terminal_write("[GUI] Framebuffer address: 0x");
+            uint64_t fb_addr = mb_info->framebuffer_addr;
+            for (int i = 60; i >= 0; i -= 4) {
+                terminal_putc(hex[(fb_addr >> i) & 0xF]);
+            }
+            terminal_write_line("");
+            terminal_write("[GUI] Resolution: ");
+            print_uint64(mb_info->framebuffer_width);
+            terminal_write("x");
+            print_uint64(mb_info->framebuffer_height);
+            terminal_write(" @ ");
+            print_uint64(mb_info->framebuffer_bpp);
+            terminal_write_line(" bpp");
+        } else {
+            terminal_write_line("[GUI] Multiboot framebuffer info NOT available.");
+            terminal_write_line("[GUI] GRUB may not be configured for framebuffer.");
+        }
+    } else {
+        terminal_write_line("[GUI] Multiboot info not available.");
+    }
+    
+    terminal_write_line("[GUI] Attempting to switch to graphics mode...");
+    
+    /* Try to switch to graphics mode and show framebuffer */
+    /* This is safe - won't cause page faults if framebuffer is not available */
+    graphics_show();
+    
+    if (graphics_is_mode_active()) {
+        terminal_write_line("[GUI] Graphics mode activated!");
+        terminal_write_line("[GUI] Framebuffer copied to video memory.");
+        terminal_write_line("[GUI] Note: If graphics not visible, screen may still be in text mode.");
+        terminal_write_line("[GUI]       Try: QEMU with -vga std or -vga vmware");
+    } else {
+        terminal_write_line("[GUI] Note: Framebuffer is in memory only.");
+        terminal_write_line("[GUI]       Multiboot framebuffer not available.");
+        terminal_write_line("[GUI]       To enable graphics display:");
+        terminal_write_line("[GUI]       1. Ensure GRUB is configured with framebuffer");
+        terminal_write_line("[GUI]       2. Or use QEMU with -vga std option");
+        terminal_write_line("[GUI]       Graphics context is ready for use.");
+    }
+    
+    graphics_context_t *ctx = graphics_get_context();
+    if (ctx) {
+        terminal_write("[GUI] Framebuffer: ");
+        terminal_write("0x");
+        /* Print framebuffer address */
+        uintptr_t addr = (uintptr_t)ctx->framebuffer;
+        char hex[] = "0123456789ABCDEF";
+        for (int i = 60; i >= 0; i -= 4) {
+            terminal_putc(hex[(addr >> i) & 0xF]);
+        }
+        terminal_write_line("");
+        terminal_write("[GUI] Resolution: ");
+        print_uint64(ctx->width);
+        terminal_write("x");
+        print_uint64(ctx->height);
+        terminal_write(" @ ");
+        print_uint64(ctx->bpp);
+        terminal_write_line(" bpp");
+    }
+}
+
 static void shell_cmd_myfetch(void) {
-    /* ASCII art logo with ⌘ symbol */
     terminal_write("\x1B[1;36m");  /* Bold cyan color */
-    terminal_write_line("     ╔═══════════╗");
-    terminal_write_line("    ║             ║");
-    terminal_write_line("   ║               ║");
-    terminal_write_line("  ║                 ║");
-    terminal_write_line(" ║        ⌘        ║");
-    terminal_write_line("  ║                 ║");
-    terminal_write_line("   ║               ║");
-    terminal_write_line("    ║             ║");
-    terminal_write_line("     ╚═══════════╝");
+    terminal_write_line("                   ____      ");
+    terminal_write_line("                  / __ \\     ");
+    terminal_write_line("  _ __ ___  _   _| |  | |___ ");
+    terminal_write_line(" | '_ ` _ \\| | | | |  | / __|");
+    terminal_write_line(" | | | | | | |_| | |__| \\__ \\");
+    terminal_write_line(" |_| |_| |_|\\__, |\\____/|___/");
+    terminal_write_line("             __/ |           ");
+    terminal_write_line("            |___/            ");
     terminal_write("\x1B[0m");  /* Reset color */
     terminal_write_line("");
-    
-    terminal_write("\x1B[1;36m");  /* Bold cyan */
+
+        terminal_write("\x1B[1;36m");  /* Bold cyan */
     terminal_write("OS:        ");
     terminal_write("\x1B[0m");
     terminal_write("\x1B[32m");  /* Green */
@@ -1306,7 +1463,7 @@ static void shell_cmd_myfetch(void) {
     terminal_write("Version:   ");
     terminal_write("\x1B[0m");
     terminal_write("\x1B[33m");  /* Yellow */
-    terminal_write_line("1.1.0");
+    terminal_write_line("1.2.0");
     
     /* Uptime */
     terminal_write("\x1B[1;36m");
@@ -1408,6 +1565,174 @@ static void shell_cmd_myfetch(void) {
     terminal_write_line(path);
     
     terminal_write("\x1B[0m");  /* Reset color */
+}
+
+static void shell_cmd_nicinfo(void) {
+    const rtl8139_info_t *info = rtl8139_get_info();
+    if (!info || !info->present) {
+        terminal_write_line("nicinfo: RTL8139 not detected.");
+        return;
+    }
+
+    terminal_write_line("RTL8139 network interface:");
+
+    char buf[4];
+
+    terminal_write("  PCI bus=");
+    buf[0] = '0' + (info->bus / 10);
+    buf[1] = '0' + (info->bus % 10);
+    buf[2] = '\0';
+    terminal_write(buf);
+
+    terminal_write(" dev=");
+    buf[0] = '0' + (info->device / 10);
+    buf[1] = '0' + (info->device % 10);
+    buf[2] = '\0';
+    terminal_write(buf);
+
+    terminal_write(" fn=");
+    buf[0] = '0' + info->function;
+    buf[1] = '\0';
+    terminal_write_line(buf);
+
+    static const char hex[] = "0123456789ABCDEF";
+    char hbuf[5];
+
+    terminal_write("  IO base=0x");
+    hbuf[0] = hex[(info->io_base >> 12) & 0xF];
+    hbuf[1] = hex[(info->io_base >> 8) & 0xF];
+    hbuf[2] = hex[(info->io_base >> 4) & 0xF];
+    hbuf[3] = hex[info->io_base & 0xF];
+    hbuf[4] = '\0';
+    terminal_write(hbuf);
+
+    terminal_write(" irq=");
+    buf[0] = '0' + (info->irq_line / 10);
+    buf[1] = '0' + (info->irq_line % 10);
+    buf[2] = '\0';
+    terminal_write_line(buf);
+}
+
+static void shell_cmd_nicregs(void) {
+    rtl8139_regs_t r;
+    if (!rtl8139_get_regs(&r)) {
+        terminal_write_line("nicregs: RTL8139 not detected.");
+        return;
+    }
+    static const char hex[] = "0123456789ABCDEF";
+    char h16[5];
+    char h32[9];
+
+    terminal_write_line("RTL8139 regs:");
+
+    terminal_write("  CR=0x");
+    h16[0] = hex[(r.cr >> 4) & 0xF];
+    h16[1] = hex[r.cr & 0xF];
+    h16[2] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  CAPR=0x");
+    h16[0] = hex[(r.capr >> 12) & 0xF];
+    h16[1] = hex[(r.capr >> 8) & 0xF];
+    h16[2] = hex[(r.capr >> 4) & 0xF];
+    h16[3] = hex[r.capr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  CBR=0x");
+    h16[0] = hex[(r.cbr >> 12) & 0xF];
+    h16[1] = hex[(r.cbr >> 8) & 0xF];
+    h16[2] = hex[(r.cbr >> 4) & 0xF];
+    h16[3] = hex[r.cbr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  ISR=0x");
+    h16[0] = hex[(r.isr >> 12) & 0xF];
+    h16[1] = hex[(r.isr >> 8) & 0xF];
+    h16[2] = hex[(r.isr >> 4) & 0xF];
+    h16[3] = hex[r.isr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  IMR=0x");
+    h16[0] = hex[(r.imr >> 12) & 0xF];
+    h16[1] = hex[(r.imr >> 8) & 0xF];
+    h16[2] = hex[(r.imr >> 4) & 0xF];
+    h16[3] = hex[r.imr & 0xF];
+    h16[4] = '\0';
+    terminal_write_line(h16);
+
+    terminal_write("  RCR=0x");
+    uint32_t v = r.rcr;
+    for (int i = 7; i >= 0; --i) {
+        h32[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    h32[8] = '\0';
+    terminal_write_line(h32);
+}
+
+static void shell_cmd_netdump(void) {
+    int count = rtl8139_poll_rx(16);
+    terminal_write("netdump: processed ");
+    print_uint64((uint64_t)count);
+    terminal_write_line(" frame(s).");
+}
+
+static void shell_cmd_ping(const char *args) {
+    const char *ip_str = shell_skip_spaces(args);
+    if (!ip_str || *ip_str == '\0') {
+        terminal_write_line("Usage: ping <ip>");
+        terminal_write_line("Example: ping 10.0.2.2");
+        return;
+    }
+    uint32_t ip_host = 0;
+    if (!net_parse_ipv4(ip_str, &ip_host)) {
+        terminal_write_line("ping: invalid IP (use a.b.c.d).");
+        return;
+    }
+    
+    /* Print IP in readable format */
+    terminal_write("PING ");
+    char ip_buf[16];
+    uint32_t a = ip_host & 0xFF;
+    uint32_t b = (ip_host >> 8) & 0xFF;
+    uint32_t c = (ip_host >> 16) & 0xFF;
+    uint32_t d = (ip_host >> 24) & 0xFF;
+    int pos = 0;
+    if (a >= 100) ip_buf[pos++] = (char)('0' + (a / 100));
+    if (a >= 10) ip_buf[pos++] = (char)('0' + ((a / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (a % 10));
+    ip_buf[pos++] = '.';
+    if (b >= 100) ip_buf[pos++] = (char)('0' + (b / 100));
+    if (b >= 10) ip_buf[pos++] = (char)('0' + ((b / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (b % 10));
+    ip_buf[pos++] = '.';
+    if (c >= 100) ip_buf[pos++] = (char)('0' + (c / 100));
+    if (c >= 10) ip_buf[pos++] = (char)('0' + ((c / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (c % 10));
+    ip_buf[pos++] = '.';
+    if (d >= 100) ip_buf[pos++] = (char)('0' + (d / 100));
+    if (d >= 10) ip_buf[pos++] = (char)('0' + ((d / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (d % 10));
+    ip_buf[pos] = '\0';
+    terminal_write(ip_buf);
+    terminal_write_line("...");
+    
+    uint32_t rtt_ms = 0;
+    int r = net_ping(ip_host, 2000, &rtt_ms);
+    if (r == 0) {
+        terminal_write("Reply from ");
+        terminal_write(ip_buf);
+        terminal_write(": time=");
+        print_uint64(rtt_ms);
+        terminal_write_line("ms");
+    } else if (r == -1) {
+        terminal_write_line("ping: ARP resolve failed.");
+    } else {
+        terminal_write_line("ping: timeout (no reply).");
+    }
 }
 
 static void shell_cmd_hexdump(const char *args) {
@@ -2219,6 +2544,29 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "nicinfo")) != NULL) {
+        (void)args;
+        shell_cmd_nicinfo();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "nicregs")) != NULL) {
+        (void)args;
+        shell_cmd_nicregs();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "netdump")) != NULL) {
+        (void)args;
+        shell_cmd_netdump();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "ping")) != NULL) {
+        shell_cmd_ping(args);
+        return;
+    }
+
     if ((args = shell_match_command(line, "cp")) != NULL) {
         shell_cmd_cp(args);
         return;
@@ -2272,6 +2620,12 @@ static void shell_execute(const char *line) {
     if ((args = shell_match_command(line, "ansi")) != NULL) {
         (void)args;
         shell_cmd_ansi_test();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "gui")) != NULL) {
+        (void)args;
+        shell_cmd_gui();
         return;
     }
 
@@ -2337,7 +2691,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "myfetch", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "nicinfo", "nicregs", "netdump", "ping", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {

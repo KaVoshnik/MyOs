@@ -12,7 +12,7 @@ NASM := nasm
 CFLAGS := -m64 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Werror -nostdlib -nostdinc -fno-builtin -I include
 LDFLAGS := -nostdlib -z max-page-size=0x1000
 
-SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c src/system.c src/thread.c src/process.c src/user.c src/login.c src/mouse.c
+SRC := src/kernel.c src/terminal.c src/string.c src/interrupts.c src/pit.c src/keyboard.c src/memory.c src/shell.c src/filesystem.c src/ata.c src/system.c src/thread.c src/process.c src/user.c src/login.c src/mouse.c src/graphics.c src/panic.c src/pci.c src/serial.c src/rtl8139.c src/net.c
 ASM_SRC := src/thread_switch.S
 OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o) $(ASM_SRC:%.S=$(BUILD_DIR)/%.o) $(BUILD_DIR)/boot.o
 
@@ -49,7 +49,7 @@ $(DISK_IMAGE): | $(BUILD_DIR)
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 
 run: $(ISO_IMAGE) $(DISK_IMAGE)
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive file=$(DISK_IMAGE),if=ide,format=raw
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive file=$(DISK_IMAGE),if=ide,format=raw -netdev user,id=n0 -device rtl8139,netdev=n0 -serial stdio
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -1,0 +1,575 @@
+#include <graphics.h>
+#include <io.h>
+#include <memory.h>
+#include <string.h>
+#include <stdint.h>
+#include <stddef.h>
+
+/* Multiboot information structure - must be declared before use */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t color_info[6];
+} __attribute__((packed));
+
+/* External reference to multiboot info (set in kernel.c) */
+extern struct multiboot_info *mb_info;
+
+/* Global graphics context */
+static graphics_context_t gfx_ctx = {0};
+static int graphics_initialized = 0;
+static uint32_t *video_framebuffer = NULL;  /* Physical video memory address */
+static int graphics_mode_active = 0;  /* Whether we're in graphics mode */
+static int using_multiboot_fb = 0;  /* Whether we're using Multiboot framebuffer directly */
+
+/* Simple 8x8 bitmap font (ASCII 32-127) */
+static const uint8_t font_8x8[96][8] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* space */
+    {0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00}, /* ! */
+    {0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* " */
+    {0x36, 0x36, 0x7F, 0x36, 0x7F, 0x36, 0x36, 0x00}, /* # */
+    {0x0C, 0x3E, 0x03, 0x1E, 0x30, 0x1F, 0x0C, 0x00}, /* $ */
+    {0x00, 0x63, 0x33, 0x18, 0x0C, 0x66, 0x63, 0x00}, /* % */
+    {0x1C, 0x36, 0x1C, 0x6E, 0x3B, 0x33, 0x6E, 0x00}, /* & */
+    {0x06, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ' */
+    {0x18, 0x0C, 0x06, 0x06, 0x06, 0x0C, 0x18, 0x00}, /* ( */
+    {0x06, 0x0C, 0x18, 0x18, 0x18, 0x0C, 0x06, 0x00}, /* ) */
+    {0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00}, /* * */
+    {0x00, 0x0C, 0x0C, 0x3F, 0x0C, 0x0C, 0x00, 0x00}, /* + */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x06, 0x00}, /* , */
+    {0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00}, /* - */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x00}, /* . */
+    {0x60, 0x30, 0x18, 0x0C, 0x06, 0x03, 0x01, 0x00}, /* / */
+    {0x3E, 0x63, 0x73, 0x7B, 0x6F, 0x67, 0x3E, 0x00}, /* 0 */
+    {0x0C, 0x0E, 0x0C, 0x0C, 0x0C, 0x0C, 0x3F, 0x00}, /* 1 */
+    {0x1E, 0x33, 0x30, 0x1C, 0x06, 0x33, 0x3F, 0x00}, /* 2 */
+    {0x1E, 0x33, 0x30, 0x1C, 0x30, 0x33, 0x1E, 0x00}, /* 3 */
+    {0x38, 0x3C, 0x36, 0x33, 0x7F, 0x30, 0x78, 0x00}, /* 4 */
+    {0x3F, 0x03, 0x1F, 0x30, 0x30, 0x33, 0x1E, 0x00}, /* 5 */
+    {0x1C, 0x06, 0x03, 0x1F, 0x33, 0x33, 0x1E, 0x00}, /* 6 */
+    {0x3F, 0x33, 0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x00}, /* 7 */
+    {0x1E, 0x33, 0x33, 0x1E, 0x33, 0x33, 0x1E, 0x00}, /* 8 */
+    {0x1E, 0x33, 0x33, 0x3E, 0x30, 0x18, 0x0E, 0x00}, /* 9 */
+    {0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x0C, 0x00}, /* : */
+    {0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x06, 0x00}, /* ; */
+    {0x18, 0x0C, 0x06, 0x03, 0x06, 0x0C, 0x18, 0x00}, /* < */
+    {0x00, 0x00, 0x3F, 0x00, 0x00, 0x3F, 0x00, 0x00}, /* = */
+    {0x06, 0x0C, 0x18, 0x30, 0x18, 0x0C, 0x06, 0x00}, /* > */
+    {0x1E, 0x33, 0x30, 0x18, 0x0C, 0x00, 0x0C, 0x00}, /* ? */
+    {0x3E, 0x63, 0x7B, 0x7B, 0x7B, 0x03, 0x1E, 0x00}, /* @ */
+    {0x0C, 0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x00}, /* A */
+    {0x3F, 0x66, 0x66, 0x3E, 0x66, 0x66, 0x3F, 0x00}, /* B */
+    {0x3C, 0x66, 0x03, 0x03, 0x03, 0x66, 0x3C, 0x00}, /* C */
+    {0x1F, 0x36, 0x66, 0x66, 0x66, 0x36, 0x1F, 0x00}, /* D */
+    {0x7F, 0x06, 0x06, 0x3E, 0x06, 0x06, 0x7F, 0x00}, /* E */
+    {0x7F, 0x06, 0x06, 0x3E, 0x06, 0x06, 0x06, 0x00}, /* F */
+    {0x3C, 0x66, 0x03, 0x73, 0x33, 0x66, 0x3C, 0x00}, /* G */
+    {0x33, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x33, 0x00}, /* H */
+    {0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00}, /* I */
+    {0x78, 0x30, 0x30, 0x30, 0x33, 0x33, 0x1E, 0x00}, /* J */
+    {0x67, 0x66, 0x36, 0x1E, 0x36, 0x66, 0x67, 0x00}, /* K */
+    {0x06, 0x06, 0x06, 0x06, 0x06, 0x06, 0x7F, 0x00}, /* L */
+    {0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x00}, /* M */
+    {0x63, 0x67, 0x6F, 0x7B, 0x73, 0x63, 0x63, 0x00}, /* N */
+    {0x1C, 0x36, 0x63, 0x63, 0x63, 0x36, 0x1C, 0x00}, /* O */
+    {0x3F, 0x66, 0x66, 0x3E, 0x06, 0x06, 0x06, 0x00}, /* P */
+    {0x1E, 0x33, 0x33, 0x33, 0x3B, 0x1E, 0x38, 0x00}, /* Q */
+    {0x3F, 0x66, 0x66, 0x3E, 0x36, 0x66, 0x67, 0x00}, /* R */
+    {0x1E, 0x33, 0x07, 0x0E, 0x38, 0x33, 0x1E, 0x00}, /* S */
+    {0x3F, 0x2D, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00}, /* T */
+    {0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x3F, 0x00}, /* U */
+    {0x33, 0x33, 0x33, 0x33, 0x33, 0x1E, 0x0C, 0x00}, /* V */
+    {0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x00}, /* W */
+    {0x63, 0x63, 0x36, 0x1C, 0x1C, 0x36, 0x63, 0x00}, /* X */
+    {0x33, 0x33, 0x33, 0x1E, 0x0C, 0x0C, 0x1E, 0x00}, /* Y */
+    {0x7F, 0x63, 0x31, 0x18, 0x4C, 0x66, 0x7F, 0x00}, /* Z */
+    {0x1E, 0x06, 0x06, 0x06, 0x06, 0x06, 0x1E, 0x00}, /* [ */
+    {0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x40, 0x00}, /* \ */
+    {0x1E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x1E, 0x00}, /* ] */
+    {0x08, 0x1C, 0x36, 0x63, 0x00, 0x00, 0x00, 0x00}, /* ^ */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}, /* _ */
+    {0x0C, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ` */
+    {0x00, 0x00, 0x1E, 0x30, 0x3E, 0x33, 0x6E, 0x00}, /* a */
+    {0x07, 0x06, 0x06, 0x3E, 0x66, 0x66, 0x3B, 0x00}, /* b */
+    {0x00, 0x00, 0x1E, 0x33, 0x03, 0x33, 0x1E, 0x00}, /* c */
+    {0x38, 0x30, 0x30, 0x3e, 0x33, 0x33, 0x6E, 0x00}, /* d */
+    {0x00, 0x00, 0x1E, 0x33, 0x3f, 0x03, 0x1E, 0x00}, /* e */
+    {0x1C, 0x36, 0x06, 0x0f, 0x06, 0x06, 0x0F, 0x00}, /* f */
+    {0x00, 0x00, 0x6E, 0x33, 0x33, 0x3E, 0x30, 0x1F}, /* g */
+    {0x07, 0x06, 0x36, 0x6E, 0x66, 0x66, 0x67, 0x00}, /* h */
+    {0x0C, 0x00, 0x0E, 0x0C, 0x0C, 0x0C, 0x1E, 0x00}, /* i */
+    {0x30, 0x00, 0x30, 0x30, 0x30, 0x33, 0x33, 0x1E}, /* j */
+    {0x07, 0x06, 0x66, 0x36, 0x1E, 0x36, 0x67, 0x00}, /* k */
+    {0x0E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00}, /* l */
+    {0x00, 0x00, 0x33, 0x7F, 0x7F, 0x6B, 0x63, 0x00}, /* m */
+    {0x00, 0x00, 0x1F, 0x33, 0x33, 0x33, 0x33, 0x00}, /* n */
+    {0x00, 0x00, 0x1E, 0x33, 0x33, 0x33, 0x1E, 0x00}, /* o */
+    {0x00, 0x00, 0x3B, 0x66, 0x66, 0x3E, 0x06, 0x0F}, /* p */
+    {0x00, 0x00, 0x6E, 0x33, 0x33, 0x3E, 0x30, 0x78}, /* q */
+    {0x00, 0x00, 0x3B, 0x6E, 0x66, 0x06, 0x0F, 0x00}, /* r */
+    {0x00, 0x00, 0x3E, 0x03, 0x1E, 0x30, 0x1F, 0x00}, /* s */
+    {0x08, 0x0C, 0x3E, 0x0C, 0x0C, 0x2C, 0x18, 0x00}, /* t */
+    {0x00, 0x00, 0x33, 0x33, 0x33, 0x33, 0x6E, 0x00}, /* u */
+    {0x00, 0x00, 0x33, 0x33, 0x33, 0x1E, 0x0C, 0x00}, /* v */
+    {0x00, 0x00, 0x63, 0x6B, 0x7F, 0x7F, 0x36, 0x00}, /* w */
+    {0x00, 0x00, 0x63, 0x36, 0x1C, 0x36, 0x63, 0x00}, /* x */
+    {0x00, 0x00, 0x33, 0x33, 0x33, 0x3E, 0x30, 0x1F}, /* y */
+    {0x00, 0x00, 0x3F, 0x19, 0x0C, 0x26, 0x3F, 0x00}, /* z */
+    {0x38, 0x0C, 0x0C, 0x07, 0x0C, 0x0C, 0x38, 0x00}, /* { */
+    {0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x18, 0x00}, /* | */
+    {0x07, 0x0C, 0x0C, 0x38, 0x0C, 0x0C, 0x07, 0x00}, /* } */
+    {0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ~ */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* DEL */
+};
+
+/* VBE mode numbers for common resolutions */
+#define VBE_MODE_640x480x32  0x114
+#define VBE_MODE_800x600x32  0x115
+#define VBE_MODE_1024x768x32 0x117
+
+/* For now, we'll use a simple framebuffer approach */
+/* In real implementation, we'd use VBE BIOS calls */
+/* For QEMU, we can use VBE mode 0x115 (800x600x32) */
+
+int graphics_init(uint16_t width, uint16_t height, uint8_t bpp) {
+    if (graphics_initialized) {
+        return -1; /* Already initialized */
+    }
+
+    /* Try to use Multiboot framebuffer if available */
+    if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag */
+        uint64_t fb_addr = mb_info->framebuffer_addr;
+        
+        if (fb_addr != 0) {
+            /* Use Multiboot framebuffer directly - this is the actual video memory! */
+            gfx_ctx.framebuffer = (uint32_t *)(uintptr_t)fb_addr;
+            gfx_ctx.width = mb_info->framebuffer_width;
+            gfx_ctx.height = mb_info->framebuffer_height;
+            gfx_ctx.pitch = mb_info->framebuffer_pitch;
+            gfx_ctx.bpp = mb_info->framebuffer_bpp;
+            gfx_ctx.current_color = COLOR_WHITE;
+            
+            video_framebuffer = gfx_ctx.framebuffer;
+            graphics_mode_active = 1;
+            graphics_initialized = 1;
+            using_multiboot_fb = 1;  /* Mark that we're using Multiboot framebuffer */
+            
+            return 0;
+        }
+    }
+    
+    /* Fallback: allocate framebuffer in memory */
+    /* Check if we have enough memory */
+    size_t framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+    size_t available = memory_heap_size() - memory_bytes_used();
+    
+    if (framebuffer_size > available) {
+        /* Try smaller resolution if requested size is too large */
+        if (width == 800 && height == 600) {
+            /* Fallback to 640x480 */
+            width = 640;
+            height = 480;
+            framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+        } else if (width == 640 && height == 480) {
+            /* Fallback to 320x240 */
+            width = 320;
+            height = 240;
+            framebuffer_size = (size_t)width * (size_t)height * (bpp / 8);
+        }
+        
+        if (framebuffer_size > available) {
+            return -2; /* Not enough memory even for smaller resolution */
+        }
+    }
+    
+    /* Allocate framebuffer */
+    uint32_t *framebuffer = (uint32_t *)kmalloc(framebuffer_size);
+    
+    if (!framebuffer) {
+        return -1; /* Out of memory */
+    }
+    
+    memset(framebuffer, 0, framebuffer_size);
+    
+    gfx_ctx.framebuffer = framebuffer;
+    gfx_ctx.width = width;
+    gfx_ctx.height = height;
+    gfx_ctx.pitch = width * (bpp / 8);
+    gfx_ctx.bpp = bpp;
+    gfx_ctx.current_color = COLOR_WHITE;
+    
+    graphics_initialized = 1;
+    
+    return 0;
+}
+
+void graphics_cleanup(void) {
+    /* Don't free Multiboot framebuffer - it's not allocated by us */
+    if (gfx_ctx.framebuffer && !using_multiboot_fb) {
+        kfree(gfx_ctx.framebuffer);
+        gfx_ctx.framebuffer = NULL;
+    }
+    graphics_initialized = 0;
+    graphics_mode_active = 0;
+    using_multiboot_fb = 0;
+    video_framebuffer = NULL;
+}
+
+graphics_context_t *graphics_get_context(void) {
+    return graphics_initialized ? &gfx_ctx : NULL;
+}
+
+void graphics_set_color(uint32_t color) {
+    gfx_ctx.current_color = color;
+}
+
+uint32_t graphics_get_color(void) {
+    return gfx_ctx.current_color;
+}
+
+void graphics_clear(uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    /* Clear using pitch-aware addressing */
+    /* For 32-bit mode, pitch should be divisible by 4, but check to be safe */
+    if (gfx_ctx.bpp != 32 || (gfx_ctx.pitch % 4) != 0) {
+        /* Fallback: use simple addressing if pitch is not aligned */
+        for (uint32_t i = 0; i < gfx_ctx.width * gfx_ctx.height; i++) {
+            gfx_ctx.framebuffer[i] = color;
+        }
+        return;
+    }
+    
+    uint32_t pitch_words = gfx_ctx.pitch / 4;  /* pitch in bytes, convert to 32-bit words */
+    for (uint32_t y = 0; y < gfx_ctx.height; y++) {
+        for (uint32_t x = 0; x < gfx_ctx.width; x++) {
+            uint32_t offset = y * pitch_words + x;
+            gfx_ctx.framebuffer[offset] = color;
+        }
+    }
+}
+
+void graphics_pixel(uint32_t x, uint32_t y, uint32_t color) {
+    if (!graphics_initialized) return;
+    if (x >= gfx_ctx.width || y >= gfx_ctx.height) return;
+    
+    /* Calculate pixel position based on pitch */
+    /* For 32-bit mode, pitch should be divisible by 4 */
+    if (gfx_ctx.bpp == 32 && (gfx_ctx.pitch % 4) == 0) {
+        uint32_t pitch_words = gfx_ctx.pitch / 4;  /* pitch in bytes, convert to 32-bit words */
+        uint32_t pixel_offset = y * pitch_words + x;
+        gfx_ctx.framebuffer[pixel_offset] = color;
+    } else {
+        /* Fallback: assume pitch equals width for non-32-bit or misaligned */
+        uint32_t pixel_offset = y * gfx_ctx.width + x;
+        gfx_ctx.framebuffer[pixel_offset] = color;
+    }
+}
+
+void graphics_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    /* Clamp to screen bounds */
+    if (x >= gfx_ctx.width || y >= gfx_ctx.height) return;
+    if (x + w > gfx_ctx.width) w = gfx_ctx.width - x;
+    if (y + h > gfx_ctx.height) h = gfx_ctx.height - y;
+    
+    /* Top and bottom */
+    for (uint32_t i = 0; i < w; i++) {
+        graphics_pixel(x + i, y, color);
+        if (h > 0) graphics_pixel(x + i, y + h - 1, color);
+    }
+    
+    /* Left and right */
+    for (uint32_t i = 0; i < h; i++) {
+        graphics_pixel(x, y + i, color);
+        if (w > 0) graphics_pixel(x + w - 1, y + i, color);
+    }
+}
+
+void graphics_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    for (uint32_t py = y; py < y + h && py < gfx_ctx.height; py++) {
+        for (uint32_t px = x; px < x + w && px < gfx_ctx.width; px++) {
+            graphics_pixel(px, py, color);
+        }
+    }
+}
+
+void graphics_line(uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2, uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    int32_t dx = (x2 > x1) ? (x2 - x1) : (x1 - x2);
+    int32_t dy = (y2 > y1) ? (y2 - y1) : (y1 - y2);
+    int32_t sx = (x1 < x2) ? 1 : -1;
+    int32_t sy = (y1 < y2) ? 1 : -1;
+    int32_t err = dx - dy;
+    
+    uint32_t x = x1;
+    uint32_t y = y1;
+    
+    while (1) {
+        graphics_pixel(x, y, color);
+        
+        if (x == x2 && y == y2) break;
+        
+        int32_t e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+void graphics_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    int32_t f = 1 - (int32_t)radius;
+    int32_t ddF_x = 1;
+    int32_t ddF_y = -2 * (int32_t)radius;
+    int32_t px = 0;
+    int32_t py = radius;
+    
+    /* Draw initial points with bounds checking */
+    if (y + radius < gfx_ctx.height) graphics_pixel(x, y + radius, color);
+    if (radius <= y) graphics_pixel(x, y - radius, color);
+    if (x + radius < gfx_ctx.width) graphics_pixel(x + radius, y, color);
+    if (radius <= x) graphics_pixel(x - radius, y, color);
+    
+    while (px < py) {
+        if (f >= 0) {
+            py--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        px++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        /* Draw 8 symmetric points with bounds checking */
+        uint32_t px_u = (uint32_t)px;
+        uint32_t py_u = (uint32_t)py;
+        
+        if (x + px_u < gfx_ctx.width && y + py_u < gfx_ctx.height) graphics_pixel(x + px_u, y + py_u, color);
+        if (px_u <= x && y + py_u < gfx_ctx.height) graphics_pixel(x - px_u, y + py_u, color);
+        if (x + px_u < gfx_ctx.width && py_u <= y) graphics_pixel(x + px_u, y - py_u, color);
+        if (px_u <= x && py_u <= y) graphics_pixel(x - px_u, y - py_u, color);
+        if (x + py_u < gfx_ctx.width && y + px_u < gfx_ctx.height) graphics_pixel(x + py_u, y + px_u, color);
+        if (py_u <= x && y + px_u < gfx_ctx.height) graphics_pixel(x - py_u, y + px_u, color);
+        if (x + py_u < gfx_ctx.width && px_u <= y) graphics_pixel(x + py_u, y - px_u, color);
+        if (py_u <= x && px_u <= y) graphics_pixel(x - py_u, y - px_u, color);
+    }
+}
+
+void graphics_fill_circle(uint32_t x, uint32_t y, uint32_t radius, uint32_t color) {
+    if (!graphics_initialized) return;
+    
+    for (int32_t py = -(int32_t)radius; py <= (int32_t)radius; py++) {
+        for (int32_t px = -(int32_t)radius; px <= (int32_t)radius; px++) {
+            if (px * px + py * py <= (int32_t)(radius * radius)) {
+                /* Check for underflow before converting to uint32_t */
+                if ((int32_t)x + px >= 0 && (int32_t)y + py >= 0) {
+                    uint32_t fx = (uint32_t)((int32_t)x + px);
+                    uint32_t fy = (uint32_t)((int32_t)y + py);
+                    if (fx < gfx_ctx.width && fy < gfx_ctx.height) {
+                        graphics_pixel(fx, fy, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void graphics_draw_char(uint32_t x, uint32_t y, char c, uint32_t fg_color, uint32_t bg_color) {
+    if (!graphics_initialized) return;
+    
+    /* Clamp character to valid range */
+    unsigned char uc = (unsigned char)c;
+    if (uc < 32) uc = '?';
+    if (uc > 127) uc = '?';
+    
+    const uint8_t *font_data = font_8x8[uc - 32];
+    
+    for (uint32_t row = 0; row < 8; row++) {
+        uint8_t row_data = font_data[row];
+        for (uint32_t col = 0; col < 8; col++) {
+            uint32_t px = x + col;
+            uint32_t py = y + row;
+            
+            if (px < gfx_ctx.width && py < gfx_ctx.height) {
+                if (row_data & (1 << (7 - col))) {
+                    graphics_pixel(px, py, fg_color);
+                } else if (bg_color != 0xFFFFFFFF) { /* 0xFFFFFFFF = transparent */
+                    graphics_pixel(px, py, bg_color);
+                }
+            }
+        }
+    }
+}
+
+void graphics_draw_string(uint32_t x, uint32_t y, const char *str, uint32_t fg_color, uint32_t bg_color) {
+    if (!graphics_initialized) return;
+    
+    uint32_t cx = x;
+    while (*str) {
+        graphics_draw_char(cx, y, *str, fg_color, bg_color);
+        cx += 8;
+        str++;
+    }
+}
+
+int graphics_set_video_mode(uint16_t width, uint16_t height, uint8_t bpp) {
+    /* Parameters are used for validation/compatibility checking */
+    (void)width;
+    (void)height;
+    (void)bpp;
+    
+    /* Try to get framebuffer from Multiboot info */
+    if (mb_info && (mb_info->flags & (1 << 12))) {  /* FRAMEBUFFER_INFO flag (bit 12) */
+        uint64_t fb_addr = mb_info->framebuffer_addr;
+        
+        if (fb_addr != 0) {
+            video_framebuffer = (uint32_t *)(uintptr_t)fb_addr;
+            graphics_mode_active = 1;
+            return 0;
+        }
+    }
+    
+    /* Don't use fallback addresses - they may not exist and cause page faults */
+    /* Instead, return error and let user know framebuffer is not available */
+    graphics_mode_active = 0;
+    video_framebuffer = NULL;
+    return -1;  /* No framebuffer found */
+}
+
+void graphics_flush(void) {
+    /* If we're using Multiboot framebuffer directly, no need to copy */
+    /* The framebuffer is already the video memory */
+    if (using_multiboot_fb || (mb_info && (mb_info->flags & (1 << 12)) && mb_info->framebuffer_addr != 0)) {
+        /* We're already writing directly to video memory, nothing to flush */
+        return;
+    }
+    
+    /* Only copy if we have a separate framebuffer and video memory */
+    if (!graphics_initialized || !graphics_mode_active || !video_framebuffer) {
+        return;
+    }
+    
+    if (!gfx_ctx.framebuffer || gfx_ctx.framebuffer == video_framebuffer) {
+        return;  /* Already the same, or using Multiboot framebuffer directly */
+    }
+    
+    /* Copy our framebuffer to video memory, respecting pitch */
+    /* For 32-bit mode, pitch should be divisible by 4 */
+    if (gfx_ctx.bpp != 32 || (gfx_ctx.pitch % 4) != 0) {
+        /* Fallback: simple copy if pitch is not aligned */
+        size_t size = gfx_ctx.width * gfx_ctx.height;
+        for (size_t i = 0; i < size; i++) {
+            video_framebuffer[i] = gfx_ctx.framebuffer[i];
+        }
+        return;
+    }
+    
+    uint32_t src_pitch_words = gfx_ctx.pitch / 4;
+    uint32_t dst_pitch = (mb_info && (mb_info->flags & (1 << 12))) ? mb_info->framebuffer_pitch : gfx_ctx.pitch;
+    uint32_t dst_pitch_words = (dst_pitch % 4 == 0) ? (dst_pitch / 4) : src_pitch_words;
+    
+    for (uint32_t y = 0; y < gfx_ctx.height; y++) {
+        for (uint32_t x = 0; x < gfx_ctx.width; x++) {
+            uint32_t src_offset = y * src_pitch_words + x;
+            uint32_t dst_offset = y * dst_pitch_words + x;
+            video_framebuffer[dst_offset] = gfx_ctx.framebuffer[src_offset];
+        }
+    }
+}
+
+int graphics_is_mode_active(void) {
+    return graphics_mode_active ? 1 : 0;
+}
+
+void graphics_show(void) {
+    /* Switch to graphics mode and display framebuffer */
+    if (!graphics_initialized) {
+        return;
+    }
+    
+    /* If we're already using Multiboot framebuffer, we're done */
+    if (using_multiboot_fb) {
+        return;  /* Already writing directly to video memory */
+    }
+    
+    /* Set video mode - this will only succeed if Multiboot provides framebuffer */
+    int result = graphics_set_video_mode(gfx_ctx.width, gfx_ctx.height, gfx_ctx.bpp);
+    
+    /* Only copy framebuffer if video mode was successfully set */
+    if (result == 0) {
+        graphics_flush();
+    }
+}
+
+void graphics_demo(void) {
+    if (!graphics_initialized) {
+        return;
+    }
+    
+    /* Clear screen with dark blue */
+    graphics_clear(COLOR_BLUE);
+    
+    /* Draw some rectangles */
+    graphics_fill_rect(50, 50, 200, 100, COLOR_RED);
+    graphics_rect(50, 50, 200, 100, COLOR_WHITE);
+    
+    graphics_fill_rect(300, 50, 200, 100, COLOR_GREEN);
+    graphics_rect(300, 50, 200, 100, COLOR_WHITE);
+    
+    /* Draw circles */
+    graphics_circle(150, 300, 50, COLOR_YELLOW);
+    graphics_fill_circle(400, 300, 50, COLOR_CYAN);
+    
+    /* Draw lines */
+    graphics_line(50, 400, 550, 400, COLOR_WHITE);
+    graphics_line(300, 200, 300, 550, COLOR_WHITE);
+    
+    /* Draw text */
+    graphics_draw_string(60, 60, "MyOs GUI", COLOR_WHITE, 0xFFFFFFFF);
+    graphics_draw_string(310, 60, "Graphics", COLOR_BLACK, 0xFFFFFFFF);
+    graphics_draw_string(100, 320, "Circle", COLOR_YELLOW, 0xFFFFFFFF);
+    graphics_draw_string(350, 320, "Filled", COLOR_BLACK, 0xFFFFFFFF);
+    graphics_draw_string(200, 420, "Hello, Graphics!", COLOR_WHITE, 0xFFFFFFFF);
+    
+    /* Show on screen if video mode is set */
+    if (graphics_mode_active) {
+        graphics_flush();
+    }
+}
+
