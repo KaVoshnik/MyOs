@@ -275,13 +275,19 @@ int rtl8139_send_frame(const void *data, size_t len) {
     outl((uint16_t)(rtl_io() + RTL_TSD0), (uint32_t)wire_len);
 
     /* Poll completion with bounded wait */
+    uint32_t last_st = 0;
     for (uint32_t i = 0; i < 1000000u; ++i) {
         uint32_t st = inl((uint16_t)(rtl_io() + RTL_TSD0));
+        last_st = st;
         /* TOK (bit 15) indicates transmit OK */
         if (st & (1u << 15)) {
             return 0;
         }
     }
+    terminal_write("[net][tx] timeout, TSD0=0x");
+    term_hex16((uint16_t)((last_st >> 16) & 0xFFFF));
+    term_hex16((uint16_t)(last_st & 0xFFFF));
+    terminal_write_line("");
     return -3;
 }
 

@@ -81,6 +81,81 @@ static volatile int g_ping_got_reply = 0;
 static uint16_t g_ping_ident = 0x1234;
 static uint16_t g_ping_seq = 1;
 
+/* Debug helper: dump basic info about an Ethernet frame we transmit */
+static void net_dump_tx_frame(const uint8_t *frame, size_t len) {
+    if (!frame || len < sizeof(eth_hdr_t)) {
+        terminal_write_line("[net][tx] frame too short");
+        return;
+    }
+    const eth_hdr_t *eth = (const eth_hdr_t *)frame;
+    uint16_t et = ntohs(eth->ethertype);
+
+    terminal_write("[net][tx] len=");
+    /* simple decimal print */
+    char buf[16];
+    size_t n = len;
+    int i = 0;
+    if (n == 0) {
+        buf[i++] = '0';
+    } else {
+        char tmp[16];
+        int t = 0;
+        while (n > 0 && t < (int)sizeof(tmp)) {
+            tmp[t++] = (char)('0' + (n % 10));
+            n /= 10;
+        }
+        while (t > 0 && i < (int)sizeof(buf) - 1) {
+            buf[i++] = tmp[--t];
+        }
+    }
+    buf[i] = '\0';
+    terminal_write(buf);
+
+    static const char hex[] = "0123456789ABCDEF";
+    char h16[5];
+
+    terminal_write(" eth=0x");
+    h16[0] = hex[(et >> 12) & 0xF];
+    h16[1] = hex[(et >> 8) & 0xF];
+    h16[2] = hex[(et >> 4) & 0xF];
+    h16[3] = hex[et & 0xF];
+    h16[4] = '\0';
+    terminal_write(h16);
+
+    terminal_write(" dst=");
+    for (int k = 0; k < 6; ++k) {
+        char b[3];
+        b[0] = hex[(eth->dst[k] >> 4) & 0xF];
+        b[1] = hex[eth->dst[k] & 0xF];
+        b[2] = '\0';
+        terminal_write(b);
+        if (k != 5) terminal_write(":");
+    }
+    terminal_write(" src=");
+    for (int k = 0; k < 6; ++k) {
+        char b[3];
+        b[0] = hex[(eth->src[k] >> 4) & 0xF];
+        b[1] = hex[eth->src[k] & 0xF];
+        b[2] = '\0';
+        terminal_write(b);
+        if (k != 5) terminal_write(":");
+    }
+    terminal_write_line("");
+
+    /* Dump первые ~40 байт */
+    size_t dump = len < 40 ? len : 40;
+    terminal_write("          ");
+    for (size_t j = 0; j < dump; ++j) {
+        char b[3];
+        b[0] = hex[(frame[j] >> 4) & 0xF];
+        b[1] = hex[frame[j] & 0xF];
+        b[2] = '\0';
+        terminal_write(b);
+        terminal_write(j + 1 == dump ? "" : " ");
+    }
+    terminal_write_line("");
+}
+
 static void net_send_eth(const uint8_t dst_mac[6], uint16_t ethertype, const void *payload, size_t len) {
     uint8_t frame[1518];
     if (len + sizeof(eth_hdr_t) > sizeof(frame)) {
@@ -91,7 +166,23 @@ static void net_send_eth(const uint8_t dst_mac[6], uint16_t ethertype, const voi
     memcpy(eth->src, g_mac, 6);
     eth->ethertype = htons(ethertype);
     memcpy(frame + sizeof(eth_hdr_t), payload, len);
-    (void)rtl8139_send_frame(frame, sizeof(eth_hdr_t) + len);
+    net_dump_tx_frame(frame, sizeof(eth_hdr_t) + len);
+    int rc = rtl8139_send_frame(frame, sizeof(eth_hdr_t) + len);
+    if (rc != 0) {
+        terminal_write("[net][tx] rtl8139_send_frame failed rc=");
+        char buf[4];
+        buf[0] = (char)('0' + ((-rc / 10) % 10));
+        buf[1] = (char)('0' + ((-rc) % 10));
+        buf[2] = '\0';
+        if (rc > -10 && rc < 0) {
+            /* shift for single-digit */
+            buf[0] = '-';
+            buf[1] = (char)('0' + (-rc));
+            buf[2] = '\0';
+        }
+        terminal_write(buf);
+        terminal_write_line("");
+    }
 }
 
 static void arp_send_request(uint32_t target_ip_host) {
