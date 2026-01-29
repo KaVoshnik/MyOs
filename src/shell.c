@@ -13,6 +13,7 @@
 #include <mouse.h>
 #include <graphics.h>
 #include <rtl8139.h>
+#include <net.h>
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_HISTORY_SIZE 50
@@ -1612,6 +1613,69 @@ static void shell_cmd_nicinfo(void) {
     terminal_write_line(buf);
 }
 
+static void shell_cmd_netdump(void) {
+    int count = rtl8139_poll_rx(16);
+    terminal_write("netdump: processed ");
+    print_uint64((uint64_t)count);
+    terminal_write_line(" frame(s).");
+}
+
+static void shell_cmd_ping(const char *args) {
+    const char *ip_str = shell_skip_spaces(args);
+    if (!ip_str || *ip_str == '\0') {
+        terminal_write_line("Usage: ping <ip>");
+        terminal_write_line("Example: ping 10.0.2.2");
+        return;
+    }
+    uint32_t ip_be = 0;
+    if (!net_parse_ipv4(ip_str, &ip_be)) {
+        terminal_write_line("ping: invalid IP (use a.b.c.d).");
+        return;
+    }
+    
+    /* Print IP in readable format */
+    uint32_t ip_host = htonl(ip_be);
+    terminal_write("PING ");
+    char ip_buf[16];
+    uint32_t a = (ip_host >> 24) & 0xFF;
+    uint32_t b = (ip_host >> 16) & 0xFF;
+    uint32_t c = (ip_host >> 8) & 0xFF;
+    uint32_t d = ip_host & 0xFF;
+    int pos = 0;
+    if (a >= 100) ip_buf[pos++] = (char)('0' + (a / 100));
+    if (a >= 10) ip_buf[pos++] = (char)('0' + ((a / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (a % 10));
+    ip_buf[pos++] = '.';
+    if (b >= 100) ip_buf[pos++] = (char)('0' + (b / 100));
+    if (b >= 10) ip_buf[pos++] = (char)('0' + ((b / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (b % 10));
+    ip_buf[pos++] = '.';
+    if (c >= 100) ip_buf[pos++] = (char)('0' + (c / 100));
+    if (c >= 10) ip_buf[pos++] = (char)('0' + ((c / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (c % 10));
+    ip_buf[pos++] = '.';
+    if (d >= 100) ip_buf[pos++] = (char)('0' + (d / 100));
+    if (d >= 10) ip_buf[pos++] = (char)('0' + ((d / 10) % 10));
+    ip_buf[pos++] = (char)('0' + (d % 10));
+    ip_buf[pos] = '\0';
+    terminal_write(ip_buf);
+    terminal_write_line("...");
+    
+    uint32_t rtt_ms = 0;
+    int r = net_ping(ip_be, 2000, &rtt_ms);
+    if (r == 0) {
+        terminal_write("Reply from ");
+        terminal_write(ip_buf);
+        terminal_write(": time=");
+        print_uint64(rtt_ms);
+        terminal_write_line("ms");
+    } else if (r == -1) {
+        terminal_write_line("ping: ARP resolve failed.");
+    } else {
+        terminal_write_line("ping: timeout (no reply).");
+    }
+}
+
 static void shell_cmd_hexdump(const char *args) {
     char file_path[FS_MAX_PATH_LEN];
     shell_extract_token(args, file_path, sizeof(file_path));
@@ -2427,6 +2491,17 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "netdump")) != NULL) {
+        (void)args;
+        shell_cmd_netdump();
+        return;
+    }
+
+    if ((args = shell_match_command(line, "ping")) != NULL) {
+        shell_cmd_ping(args);
+        return;
+    }
+
     if ((args = shell_match_command(line, "cp")) != NULL) {
         shell_cmd_cp(args);
         return;
@@ -2551,7 +2626,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "gui", "myfetch", "nicinfo", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "nicinfo", "netdump", "ping", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {

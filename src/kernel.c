@@ -15,6 +15,7 @@
 #include <pci.h>
 #include <serial.h>
 #include <rtl8139.h>
+#include <net.h>
 
 extern uint8_t _kernel_end;
 
@@ -80,6 +81,7 @@ void kernel_main(uint64_t multiboot_info_ptr) {
 
     pci_scan_and_print();
     rtl8139_init();
+    net_init();
 
     ata_init();
     if (ata_is_available()) {
