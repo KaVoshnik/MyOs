@@ -620,3 +620,7 @@ void terminal_set_cursor(size_t row, size_t column) {
     terminal_update_cursor();
 }
 
+void terminal_get_size(size_t *cols, size_t *rows) {
+    if (cols) *cols = VGA_WIDTH;
+    if (rows) *rows = VGA_HEIGHT;
+}

@@ -1,7 +1,9 @@
 #ifndef MOUSE_H
 #define MOUSE_H
 
+#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // PS/2 mouse commands
 #define MOUSE_CMD_RESET     0xFF
@@ -40,17 +42,22 @@
 #define MOUSE_MIDDLE_BUTTON 0x04
 
 typedef struct {
-    int32_t x;
+    int32_t x;           /* Accumulated delta (raw) */
     int32_t y;
-    int32_t scroll;      // Accumulated scroll (up is positive)
+    int32_t scroll;      /* Accumulated scroll (up is positive) */
     uint8_t buttons;
     uint8_t initialized;
-    uint8_t packet_size; // 3 or 4 bytes
+    uint8_t packet_size; /* 3 or 4 bytes */
+    /* Character-cell position (0..cols-1, 0..rows-1) for UI/cursor */
+    size_t col;
+    size_t row;
 } mouse_state_t;
 
 void mouse_init(void);
 void mouse_handler(void);
 mouse_state_t get_mouse_state(void);
+/* Получить состояние мыши и обнулить накопленный scroll (для polling-команд) */
+mouse_state_t get_mouse_state_and_clear_scroll(void);
 void mouse_wait(uint8_t type);
 
 #endif

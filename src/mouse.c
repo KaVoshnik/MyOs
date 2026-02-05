@@ -76,6 +76,11 @@ void mouse_init(void) {
     
     memset(&mouse_state, 0, sizeof(mouse_state));
     mouse_state.packet_size = 3;
+    /* Стартовая позиция мыши — центр экрана в символах */
+    size_t cols = 80, rows = 25;
+    terminal_get_size(&cols, &rows);
+    mouse_state.col = cols / 2;
+    mouse_state.row = rows / 2;
     
     mouse_wait(1);
     outb(PS2_COMMAND_PORT, 0xA8);
@@ -145,6 +150,25 @@ void mouse_handler(void) {
     mouse_state.x += dx;
     mouse_state.y -= dy; /* screen coords: up is negative dy */
 
+    /* Prevent runaway growth of raw coords */
+    const int32_t RAW_LIMIT = 32767;
+    if (mouse_state.x > RAW_LIMIT) mouse_state.x = RAW_LIMIT;
+    if (mouse_state.x < -RAW_LIMIT) mouse_state.x = -RAW_LIMIT;
+    if (mouse_state.y > RAW_LIMIT) mouse_state.y = RAW_LIMIT;
+    if (mouse_state.y < -RAW_LIMIT) mouse_state.y = -RAW_LIMIT;
+
+    /* Update character-cell cursor */
+    size_t cols = 80, rows = 25;
+    terminal_get_size(&cols, &rows);
+    int32_t new_col = (int32_t)mouse_state.col + (dx / 8);
+    int32_t new_row = (int32_t)mouse_state.row - (dy / 8);
+    if (new_col < 0) new_col = 0;
+    if (new_col >= (int32_t)cols) new_col = (int32_t)cols - 1;
+    if (new_row < 0) new_row = 0;
+    if (new_row >= (int32_t)rows) new_row = (int32_t)rows - 1;
+    mouse_state.col = (size_t)new_col;
+    mouse_state.row = (size_t)new_row;
+
     if (packet_size == 4) {
         int8_t wheel = (int8_t)(mouse_packet[3] & 0x0F);
         if (wheel & 0x08) {
@@ -164,4 +188,10 @@ void mouse_handler(void) {
 
 mouse_state_t get_mouse_state(void) {
     return mouse_state;
+}
+
+mouse_state_t get_mouse_state_and_clear_scroll(void) {
+    mouse_state_t s = mouse_state;
+    mouse_state.scroll = 0;
+    return s;
 }

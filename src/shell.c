@@ -211,6 +211,26 @@ static void shell_cmd_help_1(void) {
     terminal_write("\x1B[32mgui\x1B[0m        - test graphics subsystem (demo)");
     terminal_write_line("");
     terminal_write_line("");
+
+    terminal_write("\x1B[1;33m");
+    terminal_write_line("Network & Mouse:");
+    terminal_write("\x1B[0m");
+    terminal_write("  ");
+    terminal_write("\x1B[32mnicinfo\x1B[0m    - show RTL8139 NIC information");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mnicregs\x1B[0m    - dump RTL8139 registers (debug)");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mnetdump\x1B[0m    - poll and dump raw Ethernet frames");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mping IP\x1B[0m    - ICMP echo via ARP/IPv4/ICMP stack");
+    terminal_write_line("");
+    terminal_write("  ");
+    terminal_write("\x1B[32mmouseinfo\x1B[0m  - show mouse position, buttons, scroll");
+    terminal_write_line("");
+    terminal_write_line("");
 }
 
 static void shell_cmd_help_2(void) {
@@ -1680,6 +1700,28 @@ static void shell_cmd_netdump(void) {
     terminal_write_line(" frame(s).");
 }
 
+static void shell_cmd_mouseinfo(void) {
+    mouse_state_t st = get_mouse_state_and_clear_scroll();
+    terminal_write_line("Mouse state:");
+    terminal_write("  x=");
+    print_uint64((uint64_t)(st.x >= 0 ? st.x : -st.x));
+    if (st.x < 0) terminal_write(" (neg)");
+    terminal_write("  y=");
+    print_uint64((uint64_t)(st.y >= 0 ? st.y : -st.y));
+    if (st.y < 0) terminal_write(" (neg)");
+    terminal_write_line("");
+    terminal_write("  col=");
+    print_uint64(st.col);
+    terminal_write(" row=");
+    print_uint64(st.row);
+    terminal_write_line("");
+    terminal_write("  buttons=");
+    print_uint64(st.buttons);
+    terminal_write("  scroll=");
+    print_uint64((uint64_t)(st.scroll >= 0 ? st.scroll : -st.scroll));
+    if (st.scroll < 0) terminal_write(" (neg)");
+    terminal_write_line("");
+}
 static void shell_cmd_ping(const char *args) {
     const char *ip_str = shell_skip_spaces(args);
     if (!ip_str || *ip_str == '\0') {
@@ -2562,6 +2604,12 @@ static void shell_execute(const char *line) {
         return;
     }
 
+    if ((args = shell_match_command(line, "mouseinfo")) != NULL) {
+        (void)args;
+        shell_cmd_mouseinfo();
+        return;
+    }
+
     if ((args = shell_match_command(line, "ping")) != NULL) {
         shell_cmd_ping(args);
         return;
@@ -2691,7 +2739,7 @@ static const char *shell_commands[] = {
     "help", "clear", "uptime", "mem", "testmem", "history", "echo", "pwd", "ls", "cd",
     "touch", "cat", "write", "append", "mkdir", "rm", "savefs", "loadfs", "diskinfo",
     "cp", "mv", "find", "grep", "head", "tail", "wc", "hexdump", "threads", "ps", "kill",
-    "spawn", "ansi", "gui", "myfetch", "nicinfo", "nicregs", "netdump", "ping", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
+    "spawn", "ansi", "gui", "myfetch", "nicinfo", "nicregs", "netdump", "ping", "mouseinfo", "whoami", "logout", "useradd", "passwd", "poweroff", "reboot", NULL
 };
 
 static size_t shell_collect_command_matches(const char *prefix, const char **matches, size_t max_matches) {
