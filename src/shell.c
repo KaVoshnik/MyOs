@@ -734,57 +734,62 @@ static void shell_cmd_cp(const char *args) {
     char dest[FS_MAX_PATH_LEN];
     const char *rest = shell_extract_token(args, src, sizeof(src));
     rest = shell_extract_token(rest, dest, sizeof(dest));
-    
+
     if (src[0] == '\0' || dest[0] == '\0') {
         terminal_write_line("Usage: cp SRC DEST");
         return;
     }
-    
+
     if (!fs_exists(src)) {
         terminal_write_line("cp: source file not found.");
         return;
     }
-    
+
     if (fs_is_dir(src)) {
         terminal_write_line("cp: cannot copy directory (use -r for recursive copy).");
         return;
     }
-    
+
+    /* Read source size first */
     size_t size = 0;
-    const uint8_t *data = fs_get_file_data(src, &size);
-    if (data == NULL && size > 0) {
+    const uint8_t *src_data = fs_get_file_data(src, &size);
+    if (src_data == NULL && size > 0) {
         terminal_write_line("cp: unable to read source file.");
         return;
     }
-    
-    fs_status_t status = fs_write_file(dest, data, size);
+
+    /* Copy the source bytes into our own heap buffer BEFORE touching the
+     * filesystem for dest.  fs_create_file / fs_write_file may reallocate
+     * internal node buffers and invalidate the pointer returned by
+     * fs_get_file_data. */
+    uint8_t *buf = NULL;
+    if (size > 0) {
+        buf = (uint8_t *)kmalloc(size);
+        if (!buf) {
+            terminal_write_line("cp: out of memory.");
+            return;
+        }
+        memcpy(buf, src_data, size);
+    }
+
+    /* Ensure dest file exists */
+    if (!fs_exists(dest)) {
+        fs_status_t cs = fs_create_file(dest);
+        if (cs != FS_OK) {
+            if (buf) kfree(buf);
+            shell_print_fs_error(cs);
+            return;
+        }
+    }
+
+    fs_status_t status = fs_write_file(dest, buf, size);
+    if (buf) kfree(buf);
+
     if (status != FS_OK) {
-        if (status == FS_ERR_NOENT) {
-            fs_status_t create_status = fs_create_file(dest);
-            if (create_status == FS_OK) {
-                status = fs_write_file(dest, data, size);
-            } else {
-                status = create_status;
-            }
-        }
-        if (status != FS_OK) {
-            shell_print_fs_error(status);
-        } else {
-            terminal_write("\x1B[1;32m");  /* Bold green */
-            terminal_write("[OK] ");
-            terminal_write("\x1B[0m");
-            terminal_write("\x1B[32m");
-            terminal_write("File copied successfully.");
-            terminal_write("\x1B[0m");
-            terminal_write_line("");
-        }
+        shell_print_fs_error(status);
     } else {
-        terminal_write("\x1B[1;32m");  /* Bold green */
-        terminal_write("[OK] ");
-        terminal_write("\x1B[0m");
-        terminal_write("\x1B[32m");
-        terminal_write("File copied successfully.");
-        terminal_write("\x1B[0m");
+        terminal_write("\x1B[1;32m[OK] \x1B[0m");
+        terminal_write("\x1B[32mFile copied successfully.\x1B[0m");
         terminal_write_line("");
     }
 }
@@ -794,56 +799,64 @@ static void shell_cmd_mv(const char *args) {
     char dest[FS_MAX_PATH_LEN];
     const char *rest = shell_extract_token(args, src, sizeof(src));
     rest = shell_extract_token(rest, dest, sizeof(dest));
-    
+
     if (src[0] == '\0' || dest[0] == '\0') {
         terminal_write_line("Usage: mv SRC DEST");
         return;
     }
-    
+
     if (!fs_exists(src)) {
         terminal_write_line("mv: source not found.");
         return;
     }
-    
+
     if (strcmp(src, dest) == 0) {
         return; /* Same file, nothing to do */
     }
-    
-    /* Copy first */
+
+    /* Snapshot source data before touching dest (same reason as cp) */
     size_t size = 0;
-    const uint8_t *data = fs_get_file_data(src, &size);
-    if (data == NULL && size > 0) {
+    const uint8_t *src_data = fs_get_file_data(src, &size);
+    if (src_data == NULL && size > 0) {
         terminal_write_line("mv: unable to read source.");
         return;
     }
-    
-    fs_status_t status = fs_write_file(dest, data, size);
-    if (status != FS_OK) {
-        if (status == FS_ERR_NOENT) {
-            fs_status_t create_status = fs_create_file(dest);
-            if (create_status == FS_OK) {
-                status = fs_write_file(dest, data, size);
-            } else {
-                status = create_status;
-            }
+
+    uint8_t *buf = NULL;
+    if (size > 0) {
+        buf = (uint8_t *)kmalloc(size);
+        if (!buf) {
+            terminal_write_line("mv: out of memory.");
+            return;
         }
-        if (status != FS_OK) {
-            shell_print_fs_error(status);
+        memcpy(buf, src_data, size);
+    }
+
+    /* Ensure dest file exists */
+    if (!fs_exists(dest)) {
+        fs_status_t cs = fs_create_file(dest);
+        if (cs != FS_OK) {
+            if (buf) kfree(buf);
+            shell_print_fs_error(cs);
             return;
         }
     }
-    
-    /* Then remove source */
+
+    fs_status_t status = fs_write_file(dest, buf, size);
+    if (buf) kfree(buf);
+
+    if (status != FS_OK) {
+        shell_print_fs_error(status);
+        return;
+    }
+
+    /* Remove source only after dest was written successfully */
     status = fs_remove(src, 0);
     if (status != FS_OK) {
         shell_print_fs_error(status);
     } else {
-        terminal_write("\x1B[1;32m");  /* Bold green */
-        terminal_write("[OK] ");
-        terminal_write("\x1B[0m");
-        terminal_write("\x1B[32m");
-        terminal_write("File moved successfully.");
-        terminal_write("\x1B[0m");
+        terminal_write("\x1B[1;32m[OK] \x1B[0m");
+        terminal_write("\x1B[32mFile moved successfully.\x1B[0m");
         terminal_write_line("");
     }
 }
@@ -1173,21 +1186,32 @@ static void shell_cmd_tail(const char *args) {
     
     const char *text = (const char *)data;
     int line_count = 0;
-    size_t start_pos = size;
-    
-    /* Count lines from end */
-    for (size_t i = size; i > 0; --i) {
-        if (text[i - 1] == '\n' || i == 1) {
-            line_count++;
-            if (line_count > lines) {
-                start_pos = i;
-                break;
-            }
-            if (i == 1 && text[0] != '\n') {
-                start_pos = 0;
-                break;
+    size_t start_pos = 0; /* default: show whole file if fewer lines than requested */
+
+    /* Walk backwards counting newlines.
+     * We want the byte-offset of the first character of the (lines)-th line
+     * from the end.  Stop as soon as we have seen enough newlines. */
+    if (size > 0) {
+        /* i is the index of the character we are currently examining */
+        size_t i = size;
+        while (i > 0) {
+            i--;
+            if (text[i] == '\n') {
+                /* Don't count a trailing newline at the very end of the file
+                 * as an extra empty line — it is just the line terminator of
+                 * the last real line. */
+                if (i == size - 1 && line_count == 0) {
+                    continue;
+                }
+                line_count++;
+                if (line_count == lines) {
+                    /* The line we want starts at i+1 */
+                    start_pos = i + 1;
+                    break;
+                }
             }
         }
+        /* If we never hit enough newlines, start_pos stays 0 (show all) */
     }
     
     for (size_t i = start_pos; i < size; ++i) {
@@ -2807,12 +2831,19 @@ static void shell_refresh_input(const char *buffer, size_t length, size_t cursor
 static void shell_history_append(char **history, size_t *history_count, size_t *history_index,
                                  const char *line, size_t length) {
     if (*history_count == SHELL_HISTORY_SIZE) {
+        /* Free the oldest entry */
         if (history[0]) {
             kfree(history[0]);
+            history[0] = NULL;
         }
+        /* Shift entries down */
         for (size_t i = 1; i < SHELL_HISTORY_SIZE; ++i) {
             history[i - 1] = history[i];
         }
+        /* Must NULL the last slot — after the shift it still holds a copy of
+         * history[SHELL_HISTORY_SIZE-2]'s pointer.  Leaving it non-NULL means
+         * a subsequent free of that slot (on the next overflow) would double-free
+         * the same allocation. */
         history[SHELL_HISTORY_SIZE - 1] = NULL;
         if (*history_index > 0) {
             (*history_index)--;

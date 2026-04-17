@@ -172,14 +172,17 @@ void terminal_initialize(void) {
     terminal_default_color = terminal_color;
     terminal_bold = 0;
     terminal_cursor_visible = 1;
-    
-    /* Initialize scrollback buffer */
+
+    /* Scrollback buffer requires the heap (kmalloc).
+     * memory_init() must be called before terminal_initialize().
+     * If for any reason it hasn't been called yet, we skip allocation and
+     * operate without scrollback — all scrollback functions guard on NULL. */
     terminal_scrollback_buffer = (uint16_t *)kmalloc(TERMINAL_SCROLLBACK_SIZE * VGA_WIDTH * sizeof(uint16_t));
     terminal_scrollback_count = 0;
     terminal_scrollback_head = 0;
     terminal_scroll_offset = 0;
     terminal_in_scroll_mode = 0;
-    
+
     if (terminal_scrollback_buffer) {
         memset(terminal_scrollback_buffer, 0, TERMINAL_SCROLLBACK_SIZE * VGA_WIDTH * sizeof(uint16_t));
     }

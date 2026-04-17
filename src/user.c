@@ -302,7 +302,7 @@ int config_load(system_config_t *config) {
     /* Parse default_user */
     const char *user_start = strstr(text, "default_user=");
     if (user_start) {
-        user_start += 12; /* Skip "default_user=" */
+        user_start += 13; /* Skip "default_user=" (13 characters) */
         size_t i = 0;
         while (*user_start != '\n' && *user_start != '\0' && i < USERNAME_MAX_LEN - 1) {
             config->default_user[i++] = *user_start++;
