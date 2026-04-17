@@ -734,62 +734,57 @@ static void shell_cmd_cp(const char *args) {
     char dest[FS_MAX_PATH_LEN];
     const char *rest = shell_extract_token(args, src, sizeof(src));
     rest = shell_extract_token(rest, dest, sizeof(dest));
-
+    
     if (src[0] == '\0' || dest[0] == '\0') {
         terminal_write_line("Usage: cp SRC DEST");
         return;
     }
-
+    
     if (!fs_exists(src)) {
         terminal_write_line("cp: source file not found.");
         return;
     }
-
+    
     if (fs_is_dir(src)) {
         terminal_write_line("cp: cannot copy directory (use -r for recursive copy).");
         return;
     }
-
-    /* Read source size first */
+    
     size_t size = 0;
-    const uint8_t *src_data = fs_get_file_data(src, &size);
-    if (src_data == NULL && size > 0) {
+    const uint8_t *data = fs_get_file_data(src, &size);
+    if (data == NULL && size > 0) {
         terminal_write_line("cp: unable to read source file.");
         return;
     }
-
-    /* Copy the source bytes into our own heap buffer BEFORE touching the
-     * filesystem for dest.  fs_create_file / fs_write_file may reallocate
-     * internal node buffers and invalidate the pointer returned by
-     * fs_get_file_data. */
-    uint8_t *buf = NULL;
-    if (size > 0) {
-        buf = (uint8_t *)kmalloc(size);
-        if (!buf) {
-            terminal_write_line("cp: out of memory.");
-            return;
-        }
-        memcpy(buf, src_data, size);
-    }
-
-    /* Ensure dest file exists */
-    if (!fs_exists(dest)) {
-        fs_status_t cs = fs_create_file(dest);
-        if (cs != FS_OK) {
-            if (buf) kfree(buf);
-            shell_print_fs_error(cs);
-            return;
-        }
-    }
-
-    fs_status_t status = fs_write_file(dest, buf, size);
-    if (buf) kfree(buf);
-
+    
+    fs_status_t status = fs_write_file(dest, data, size);
     if (status != FS_OK) {
-        shell_print_fs_error(status);
+        if (status == FS_ERR_NOENT) {
+            fs_status_t create_status = fs_create_file(dest);
+            if (create_status == FS_OK) {
+                status = fs_write_file(dest, data, size);
+            } else {
+                status = create_status;
+            }
+        }
+        if (status != FS_OK) {
+            shell_print_fs_error(status);
+        } else {
+            terminal_write("\x1B[1;32m");  /* Bold green */
+            terminal_write("[OK] ");
+            terminal_write("\x1B[0m");
+            terminal_write("\x1B[32m");
+            terminal_write("File copied successfully.");
+            terminal_write("\x1B[0m");
+            terminal_write_line("");
+        }
     } else {
-        terminal_write("\x1B[1;32m[OK] \x1B[0m");
-        terminal_write("\x1B[32mFile copied successfully.\x1B[0m");
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("File copied successfully.");
+        terminal_write("\x1B[0m");
         terminal_write_line("");
     }
 }
@@ -799,64 +794,56 @@ static void shell_cmd_mv(const char *args) {
     char dest[FS_MAX_PATH_LEN];
     const char *rest = shell_extract_token(args, src, sizeof(src));
     rest = shell_extract_token(rest, dest, sizeof(dest));
-
+    
     if (src[0] == '\0' || dest[0] == '\0') {
         terminal_write_line("Usage: mv SRC DEST");
         return;
     }
-
+    
     if (!fs_exists(src)) {
         terminal_write_line("mv: source not found.");
         return;
     }
-
+    
     if (strcmp(src, dest) == 0) {
         return; /* Same file, nothing to do */
     }
-
-    /* Snapshot source data before touching dest (same reason as cp) */
+    
+    /* Copy first */
     size_t size = 0;
-    const uint8_t *src_data = fs_get_file_data(src, &size);
-    if (src_data == NULL && size > 0) {
+    const uint8_t *data = fs_get_file_data(src, &size);
+    if (data == NULL && size > 0) {
         terminal_write_line("mv: unable to read source.");
         return;
     }
-
-    uint8_t *buf = NULL;
-    if (size > 0) {
-        buf = (uint8_t *)kmalloc(size);
-        if (!buf) {
-            terminal_write_line("mv: out of memory.");
-            return;
-        }
-        memcpy(buf, src_data, size);
-    }
-
-    /* Ensure dest file exists */
-    if (!fs_exists(dest)) {
-        fs_status_t cs = fs_create_file(dest);
-        if (cs != FS_OK) {
-            if (buf) kfree(buf);
-            shell_print_fs_error(cs);
-            return;
-        }
-    }
-
-    fs_status_t status = fs_write_file(dest, buf, size);
-    if (buf) kfree(buf);
-
+    
+    fs_status_t status = fs_write_file(dest, data, size);
     if (status != FS_OK) {
-        shell_print_fs_error(status);
-        return;
+        if (status == FS_ERR_NOENT) {
+            fs_status_t create_status = fs_create_file(dest);
+            if (create_status == FS_OK) {
+                status = fs_write_file(dest, data, size);
+            } else {
+                status = create_status;
+            }
+        }
+        if (status != FS_OK) {
+            shell_print_fs_error(status);
+            return;
+        }
     }
-
-    /* Remove source only after dest was written successfully */
+    
+    /* Then remove source */
     status = fs_remove(src, 0);
     if (status != FS_OK) {
         shell_print_fs_error(status);
     } else {
-        terminal_write("\x1B[1;32m[OK] \x1B[0m");
-        terminal_write("\x1B[32mFile moved successfully.\x1B[0m");
+        terminal_write("\x1B[1;32m");  /* Bold green */
+        terminal_write("[OK] ");
+        terminal_write("\x1B[0m");
+        terminal_write("\x1B[32m");
+        terminal_write("File moved successfully.");
+        terminal_write("\x1B[0m");
         terminal_write_line("");
     }
 }
@@ -1186,32 +1173,21 @@ static void shell_cmd_tail(const char *args) {
     
     const char *text = (const char *)data;
     int line_count = 0;
-    size_t start_pos = 0; /* default: show whole file if fewer lines than requested */
-
-    /* Walk backwards counting newlines.
-     * We want the byte-offset of the first character of the (lines)-th line
-     * from the end.  Stop as soon as we have seen enough newlines. */
-    if (size > 0) {
-        /* i is the index of the character we are currently examining */
-        size_t i = size;
-        while (i > 0) {
-            i--;
-            if (text[i] == '\n') {
-                /* Don't count a trailing newline at the very end of the file
-                 * as an extra empty line — it is just the line terminator of
-                 * the last real line. */
-                if (i == size - 1 && line_count == 0) {
-                    continue;
-                }
-                line_count++;
-                if (line_count == lines) {
-                    /* The line we want starts at i+1 */
-                    start_pos = i + 1;
-                    break;
-                }
+    size_t start_pos = size;
+    
+    /* Count lines from end */
+    for (size_t i = size; i > 0; --i) {
+        if (text[i - 1] == '\n' || i == 1) {
+            line_count++;
+            if (line_count > lines) {
+                start_pos = i;
+                break;
+            }
+            if (i == 1 && text[0] != '\n') {
+                start_pos = 0;
+                break;
             }
         }
-        /* If we never hit enough newlines, start_pos stays 0 (show all) */
     }
     
     for (size_t i = start_pos; i < size; ++i) {
@@ -1331,157 +1307,42 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
-/* Forward declaration of multiboot info structure */
-struct multiboot_info {
-    uint32_t flags;
-    uint32_t mem_lower;
-    uint32_t mem_upper;
-    uint32_t boot_device;
-    uint32_t cmdline;
-    uint32_t mods_count;
-    uint32_t mods_addr;
-    uint32_t syms[4];
-    uint32_t mmap_length;
-    uint32_t mmap_addr;
-    uint32_t drives_length;
-    uint32_t drives_addr;
-    uint32_t config_table;
-    uint32_t boot_loader_name;
-    uint32_t apm_table;
-    uint32_t vbe_control_info;
-    uint32_t vbe_mode_info;
-    uint16_t vbe_mode;
-    uint16_t vbe_interface_seg;
-    uint16_t vbe_interface_off;
-    uint16_t vbe_interface_len;
-    uint64_t framebuffer_addr;
-    uint32_t framebuffer_pitch;
-    uint32_t framebuffer_width;
-    uint32_t framebuffer_height;
-    uint8_t framebuffer_bpp;
-    uint8_t framebuffer_type;
-    uint8_t color_info[6];
-} __attribute__((packed));
-
 extern struct multiboot_info *mb_info;
 
 static void shell_cmd_gui(void) {
     terminal_write_line("[GUI] Initializing graphics subsystem...");
-    
-    /* Show memory status */
-    size_t used = memory_bytes_used();
-    size_t total = memory_heap_size();
-    size_t free = (total > used) ? (total - used) : 0;
-    terminal_write("[GUI] Memory: ");
-    print_uint64(free / 1024);
-    terminal_write(" KiB free / ");
-    print_uint64(total / 1024);
-    terminal_write_line(" KiB total");
-    
-    /* Try to initialize graphics with 800x600x32 */
-    /* It will automatically fallback to smaller resolution if needed */
-    int result = graphics_init(800, 600, 32);
+
+    int result = graphics_init();
     if (result != 0) {
         terminal_write("\x1B[1;31m[ERROR]\x1B[0m ");
-        if (result == -1) {
-            terminal_write_line("Failed to allocate framebuffer (out of memory).");
-        } else if (result == -2) {
-            terminal_write_line("Not enough memory for framebuffer.");
-        } else {
-            terminal_write_line("Failed to initialize graphics.");
+        switch (result) {
+            case -1: terminal_write_line("No Multiboot framebuffer info (check grub.cfg)."); break;
+            case -2: terminal_write_line("Framebuffer address is zero."); break;
+            case -3: terminal_write_line("Unsupported framebuffer type (need linear/RGB)."); break;
+            case -4: terminal_write_line("Unsupported bpp (need 32-bit color)."); break;
+            default: terminal_write_line("Unknown error."); break;
         }
-        terminal_write("[GUI] Required: ~");
-        print_uint64((800 * 600 * 4) / 1024);
-        terminal_write(" KiB for 800x600x32");
-        terminal_write_line("");
-        terminal_write("[GUI] Available: ");
-        print_uint64(free / 1024);
-        terminal_write_line(" KiB");
-        terminal_write_line("[GUI] Note: Increase heap size in kernel.c to support larger resolutions.");
-        terminal_write_line("      Current heap: 4 MiB");
+        terminal_write_line("[GUI] Make sure grub.cfg has:");
+        terminal_write_line("      set gfxmode=800x600x32");
+        terminal_write_line("      set gfxpayload=keep");
+        terminal_write_line("      terminal_output gfxterm");
+        terminal_write_line("      (BEFORE the menuentry block)");
         return;
     }
-    
-    terminal_write_line("[GUI] Graphics initialized successfully!");
-    terminal_write_line("[GUI] Running demo...");
-    
-    /* Run demo */
+
+    gfx_ctx_t *ctx = graphics_ctx();
+    terminal_write("[GUI] Framebuffer: ");
+    print_uint64(ctx->width);
+    terminal_write("x");
+    print_uint64(ctx->height);
+    terminal_write(" @ ");
+    print_uint64(ctx->bpp);
+    terminal_write_line(" bpp  — running demo...");
+
     graphics_demo();
-    
-    terminal_write_line("[GUI] Demo complete!");
-    
-    /* Check Multiboot framebuffer status */
-    if (mb_info) {
-        terminal_write("[GUI] Multiboot info available, flags: 0x");
-        char hex[] = "0123456789ABCDEF";
-        uint32_t flags = mb_info->flags;
-        for (int i = 28; i >= 0; i -= 4) {
-            terminal_putc(hex[(flags >> i) & 0xF]);
-        }
-        terminal_write_line("");
-        
-        if (mb_info->flags & (1 << 12)) {
-            terminal_write_line("[GUI] Multiboot framebuffer info available!");
-            terminal_write("[GUI] Framebuffer address: 0x");
-            uint64_t fb_addr = mb_info->framebuffer_addr;
-            for (int i = 60; i >= 0; i -= 4) {
-                terminal_putc(hex[(fb_addr >> i) & 0xF]);
-            }
-            terminal_write_line("");
-            terminal_write("[GUI] Resolution: ");
-            print_uint64(mb_info->framebuffer_width);
-            terminal_write("x");
-            print_uint64(mb_info->framebuffer_height);
-            terminal_write(" @ ");
-            print_uint64(mb_info->framebuffer_bpp);
-            terminal_write_line(" bpp");
-        } else {
-            terminal_write_line("[GUI] Multiboot framebuffer info NOT available.");
-            terminal_write_line("[GUI] GRUB may not be configured for framebuffer.");
-        }
-    } else {
-        terminal_write_line("[GUI] Multiboot info not available.");
-    }
-    
-    terminal_write_line("[GUI] Attempting to switch to graphics mode...");
-    
-    /* Try to switch to graphics mode and show framebuffer */
-    /* This is safe - won't cause page faults if framebuffer is not available */
-    graphics_show();
-    
-    if (graphics_is_mode_active()) {
-        terminal_write_line("[GUI] Graphics mode activated!");
-        terminal_write_line("[GUI] Framebuffer copied to video memory.");
-        terminal_write_line("[GUI] Note: If graphics not visible, screen may still be in text mode.");
-        terminal_write_line("[GUI]       Try: QEMU with -vga std or -vga vmware");
-    } else {
-        terminal_write_line("[GUI] Note: Framebuffer is in memory only.");
-        terminal_write_line("[GUI]       Multiboot framebuffer not available.");
-        terminal_write_line("[GUI]       To enable graphics display:");
-        terminal_write_line("[GUI]       1. Ensure GRUB is configured with framebuffer");
-        terminal_write_line("[GUI]       2. Or use QEMU with -vga std option");
-        terminal_write_line("[GUI]       Graphics context is ready for use.");
-    }
-    
-    graphics_context_t *ctx = graphics_get_context();
-    if (ctx) {
-        terminal_write("[GUI] Framebuffer: ");
-        terminal_write("0x");
-        /* Print framebuffer address */
-        uintptr_t addr = (uintptr_t)ctx->framebuffer;
-        char hex[] = "0123456789ABCDEF";
-        for (int i = 60; i >= 0; i -= 4) {
-            terminal_putc(hex[(addr >> i) & 0xF]);
-        }
-        terminal_write_line("");
-        terminal_write("[GUI] Resolution: ");
-        print_uint64(ctx->width);
-        terminal_write("x");
-        print_uint64(ctx->height);
-        terminal_write(" @ ");
-        print_uint64(ctx->bpp);
-        terminal_write_line(" bpp");
-    }
+
+    terminal_write_line("[GUI] Demo rendered. Screen should now show graphics.");
+    terminal_write_line("[GUI] Type 'gui' again to re-render.");
 }
 
 static void shell_cmd_myfetch(void) {
@@ -2831,19 +2692,12 @@ static void shell_refresh_input(const char *buffer, size_t length, size_t cursor
 static void shell_history_append(char **history, size_t *history_count, size_t *history_index,
                                  const char *line, size_t length) {
     if (*history_count == SHELL_HISTORY_SIZE) {
-        /* Free the oldest entry */
         if (history[0]) {
             kfree(history[0]);
-            history[0] = NULL;
         }
-        /* Shift entries down */
         for (size_t i = 1; i < SHELL_HISTORY_SIZE; ++i) {
             history[i - 1] = history[i];
         }
-        /* Must NULL the last slot — after the shift it still holds a copy of
-         * history[SHELL_HISTORY_SIZE-2]'s pointer.  Leaving it non-NULL means
-         * a subsequent free of that slot (on the next overflow) would double-free
-         * the same allocation. */
         history[SHELL_HISTORY_SIZE - 1] = NULL;
         if (*history_index > 0) {
             (*history_index)--;
