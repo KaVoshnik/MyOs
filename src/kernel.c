@@ -65,7 +65,12 @@ void kernel_main(uint64_t multiboot_info_ptr) {
      * Previously the order was reversed, causing kmalloc to run with a NULL
      * heap_start and silently return NULL — scrollback never worked. */
     uintptr_t heap_start = ((uintptr_t)&_kernel_end + 0xFFF) & ~((uintptr_t)0xFFF);
-    memory_init(heap_start, 0x400000); /* 4 MiB heap */
+    /* 12 MiB heap:
+     *   800x600x32 back-buffer = 1.83 MiB
+     *   scrollback 1000 rows   = 0.16 MiB
+     *   RTL8139 RX buf + misc  = ~0.5 MiB
+     *   filesystem + stacks    = rest         */
+    memory_init(heap_start, 0xC00000);
 
     terminal_initialize();
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);

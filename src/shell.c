@@ -1307,42 +1307,84 @@ static void shell_cmd_ansi_test(void) {
     terminal_write_line("Line cleared above");
 }
 
-extern struct multiboot_info *mb_info;
+extern struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower, mem_upper, boot_device, cmdline;
+    uint32_t mods_count, mods_addr, syms[4];
+    uint32_t mmap_length, mmap_addr;
+    uint32_t drives_length, drives_addr;
+    uint32_t config_table, boot_loader_name, apm_table;
+    uint32_t vbe_control_info, vbe_mode_info;
+    uint16_t vbe_mode, vbe_interface_seg, vbe_interface_off, vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t  framebuffer_bpp;
+    uint8_t  framebuffer_type;
+    uint8_t  color_info[6];
+} __attribute__((packed)) *mb_info;
 
 static void shell_cmd_gui(void) {
     terminal_write_line("[GUI] Initializing graphics subsystem...");
 
+    /* Show raw Multiboot framebuffer info for diagnostics */
+    if (mb_info && (mb_info->flags & (1u << 12))) {
+        terminal_write("[GUI] GRUB fb: ");
+        print_uint64(mb_info->framebuffer_width);
+        terminal_write("x");
+        print_uint64(mb_info->framebuffer_height);
+        terminal_write(" bpp=");
+        print_uint64(mb_info->framebuffer_bpp);
+        terminal_write(" type=");
+        print_uint64(mb_info->framebuffer_type);
+        terminal_write_line("");
+    } else {
+        terminal_write_line("[GUI] No Multiboot framebuffer — will try VBE self-setup.");
+    }
+
     int result = graphics_init();
     if (result != 0) {
-        terminal_write("\x1B[1;31m[ERROR]\x1B[0m ");
-        switch (result) {
-            case -1: terminal_write_line("No Multiboot framebuffer info (check grub.cfg)."); break;
-            case -2: terminal_write_line("Framebuffer address is zero."); break;
-            case -3: terminal_write_line("Unsupported framebuffer type (need linear/RGB)."); break;
-            case -4: terminal_write_line("Unsupported bpp (need 32-bit color)."); break;
-            default: terminal_write_line("Unknown error."); break;
-        }
-        terminal_write_line("[GUI] Make sure grub.cfg has:");
-        terminal_write_line("      set gfxmode=800x600x32");
-        terminal_write_line("      set gfxpayload=keep");
-        terminal_write_line("      terminal_output gfxterm");
-        terminal_write_line("      (BEFORE the menuentry block)");
+        terminal_write_line("\x1B[1;31m[ERROR]\x1B[0m Could not initialize graphics.");
+        terminal_write_line("  Tried: Multiboot framebuffer + Bochs VBE ports.");
+        terminal_write_line("  Make sure QEMU is launched with one of:");
+        terminal_write_line("    -vga std          (most compatible)");
+        terminal_write_line("    -vga qxl");
+        terminal_write_line("    -device bochs-display");
+        terminal_write_line("  And grub.cfg has BEFORE menuentry:");
+        terminal_write_line("    set gfxmode=800x600x32");
+        terminal_write_line("    set gfxpayload=keep");
+        terminal_write_line("    terminal_output gfxterm");
         return;
     }
 
+    /* Print color channel layout — crucial for diagnosing mirror/color issues */
+    if (mb_info && (mb_info->flags & (1u << 12)) && mb_info->framebuffer_type == 1) {
+        terminal_write("[GUI] Color layout: R_pos=");
+        print_uint64(mb_info->color_info[0]);
+        terminal_write(" G_pos=");
+        print_uint64(mb_info->color_info[2]);
+        terminal_write(" B_pos=");
+        print_uint64(mb_info->color_info[4]);
+        terminal_write_line("");
+    } else {
+        terminal_write_line("[GUI] Color layout: using VBE default BGR (R=16 G=8 B=0)");
+    }
+
     gfx_ctx_t *ctx = graphics_ctx();
-    terminal_write("[GUI] Framebuffer: ");
+    terminal_write("\x1B[32m[GUI] Mode set: \x1B[0m");
     print_uint64(ctx->width);
     terminal_write("x");
     print_uint64(ctx->height);
     terminal_write(" @ ");
     print_uint64(ctx->bpp);
-    terminal_write_line(" bpp  — running demo...");
+    terminal_write_line(" bpp — rendering...");
 
-    graphics_demo();
+    graphics_demo(); /* статичный кадр пока инициализируем */
 
-    terminal_write_line("[GUI] Demo rendered. Screen should now show graphics.");
-    terminal_write_line("[GUI] Type 'gui' again to re-render.");
+    terminal_write_line("[GUI] Entering interactive mode (Esc to exit)...");
+    gui_run();
+    terminal_write_line("[GUI] Exited GUI mode. Terminal restored.");
 }
 
 static void shell_cmd_myfetch(void) {

@@ -231,6 +231,15 @@ typedef gfx_ctx_t graphics_context_t;
 static inline graphics_context_t *graphics_get_context(void){return graphics_ctx();}
 static inline int graphics_set_video_mode(uint16_t w,uint16_t h,uint8_t b){(void)w;(void)h;(void)b;return graphics_ready()?0:-1;}
 
+#include <mouse.h>
+#include <keyboard.h>
+#include <pit.h>
+
+/* ---- GUI event loop ------------------------------------ */
+/* Запускает интерактивный рабочий стол.
+ * Выход: нажать Esc.                                      */
+void gui_run(void);
+
 void graphics_demo(void);
 
 #endif /* GRAPHICS_H */
