@@ -59,15 +59,25 @@ void kernel_main(uint64_t multiboot_info_ptr) {
         mb_info = (struct multiboot_info *)multiboot_info_ptr;
     }
     serial_init();
+
+    /* Memory MUST be initialized before terminal_initialize() because
+     * terminal_initialize() calls kmalloc() to allocate the scrollback buffer.
+     * Previously the order was reversed, causing kmalloc to run with a NULL
+     * heap_start and silently return NULL — scrollback never worked. */
+    uintptr_t heap_start = ((uintptr_t)&_kernel_end + 0xFFF) & ~((uintptr_t)0xFFF);
+    /* 12 MiB heap:
+     *   800x600x32 back-buffer = 1.83 MiB
+     *   scrollback 1000 rows   = 0.16 MiB
+     *   RTL8139 RX buf + misc  = ~0.5 MiB
+     *   filesystem + stacks    = rest         */
+    memory_init(heap_start, 0xC00000);
+
     terminal_initialize();
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREEN, TERMINAL_COLOR_BLACK);
     terminal_write_line("Welcome to MyOs!");
     terminal_set_color(TERMINAL_COLOR_LIGHT_GREY, TERMINAL_COLOR_BLACK);
-    terminal_write_line("[kernel] Setting up interrupts...");
-
-    uintptr_t heap_start = ((uintptr_t)&_kernel_end + 0xFFF) & ~((uintptr_t)0xFFF);
-    memory_init(heap_start, 0x400000); /* 4 MiB heap (increased for graphics framebuffer) */
     terminal_write_line("[kernel] Heap initialized.");
+    terminal_write_line("[kernel] Setting up interrupts...");
 
     interrupts_disable();
     interrupts_init();

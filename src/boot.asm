@@ -89,14 +89,45 @@ pml4_table:
 
 align 4096
 pdpt_table:
-    dq pd_table + 0x03
-    times 511 dq 0
+    dq pd_table_0 + 0x03   ; 0x00000000 - 0x3FFFFFFF  (first  1 GiB)
+    dq pd_table_1 + 0x03   ; 0x40000000 - 0x7FFFFFFF  (second 1 GiB)
+    dq pd_table_2 + 0x03   ; 0x80000000 - 0xBFFFFFFF  (third  1 GiB)
+    dq pd_table_3 + 0x03   ; 0xC0000000 - 0xFFFFFFFF  (fourth 1 GiB — covers 0xE0000000 LFB)
+    times 508 dq 0
 
+; First GiB: 0x00000000 - 0x3FFFFFFF
 align 4096
-pd_table:
+pd_table_0:
 %assign i 0
 %rep 512
-    dq (i << 21) | 0x183        ; 1GiB identity (2MiB pages)
+    dq (i << 21) | 0x183
+%assign i i+1
+%endrep
+
+; Second GiB: 0x40000000 - 0x7FFFFFFF
+align 4096
+pd_table_1:
+%assign i 512
+%rep 512
+    dq (i << 21) | 0x183
+%assign i i+1
+%endrep
+
+; Third GiB: 0x80000000 - 0xBFFFFFFF
+align 4096
+pd_table_2:
+%assign i 1024
+%rep 512
+    dq (i << 21) | 0x183
+%assign i i+1
+%endrep
+
+; Fourth GiB: 0xC0000000 - 0xFFFFFFFF  (MMIO region, VBE LFB lives here)
+align 4096
+pd_table_3:
+%assign i 1536
+%rep 512
+    dq (i << 21) | 0x183
 %assign i i+1
 %endrep
 

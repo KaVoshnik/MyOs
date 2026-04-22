@@ -414,10 +414,17 @@ void net_init(void) {
     }
     memcpy(g_mac, info->mac, 6);
 
-    /* QEMU usernet defaults (host byte order on x86_64 = little-endian) */
-    g_ip_host = 10u | (0u << 8) | (2u << 16) | (15u << 24);   /* 10.0.2.15 */
-    g_gw_ip_host = 10u | (0u << 8) | (2u << 16) | (2u << 24); /* 10.0.2.2  */
-    g_netmask_host = 0x00FFFFFFu; /* 255.255.255.0 in little-endian host order */
+    /* Store IPs in proper host byte order: first octet in the most-significant
+     * byte of the uint32_t, matching what htonl()/ntohl() expect on x86.
+     *   10.0.2.15  -> 0x0A02000F
+     *   10.0.2.2   -> 0x0A020002
+     *   255.255.255.0 -> 0xFFFFFF00
+     * Previously the values were stored little-endian (first octet in LSB),
+     * which made htonl() produce the wrong network-byte-order value and caused
+     * ntohl(ip->dst) != g_ip_host, so every incoming IPv4 packet was dropped. */
+    g_ip_host      = (10u << 24) | (0u << 16) | (2u << 8) | 15u;  /* 10.0.2.15  */
+    g_gw_ip_host   = (10u << 24) | (0u << 16) | (2u << 8) |  2u;  /* 10.0.2.2   */
+    g_netmask_host = (255u << 24) | (255u << 16) | (255u << 8) | 0u; /* 255.255.255.0 */
 
     arp_cache.valid = 0;
     g_ping_got_reply = 0;
@@ -508,7 +515,7 @@ int net_ping(uint32_t dst_ip_host, uint32_t timeout_ms, uint32_t *rtt_ms_out) {
 
 int net_parse_ipv4(const char *s, uint32_t *out_ip_host) {
     if (!s || !out_ip_host) return 0;
-    uint32_t parts[4] = {0,0,0,0};
+    uint32_t parts[4] = {0, 0, 0, 0};
     int part = 0;
     uint32_t acc = 0;
     int have = 0;
@@ -531,9 +538,11 @@ int net_parse_ipv4(const char *s, uint32_t *out_ip_host) {
     }
     if (!have || part != 3) return 0;
     parts[3] = acc;
-    /* host order on x86: least significant byte is first octet */
-    uint32_t ip_host = parts[0] | (parts[1] << 8) | (parts[2] << 16) | (parts[3] << 24);
-    *out_ip_host = ip_host;
+
+    /* Build in proper host byte order: first octet (parts[0]) in the
+     * most-significant byte so that htonl(ip_host) produces the correct
+     * network-byte-order value.  E.g. "10.0.2.2" -> 0x0A020002. */
+    *out_ip_host = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
     return 1;
 }
 

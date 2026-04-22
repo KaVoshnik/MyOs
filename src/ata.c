@@ -49,18 +49,33 @@ static uint64_t ata_get_time_ms(void) {
 
 static int ata_wait_busy_clear(void) {
     uint64_t start_time = ata_get_time_ms();
+    int use_time = (pit_current_frequency() != 0);
+    uint32_t iter = 0;
+    /* Fallback iteration limit when PIT is not available.
+     * ~5 000 000 spin iterations is a conservative upper bound that prevents
+     * an infinite loop while still giving a real drive enough time to respond
+     * during early boot (before pit_init has been called). */
+    const uint32_t ITER_TIMEOUT = 5000000u;
     uint8_t status;
-    
+
     do {
         status = inb(ATA_REG_STATUS);
-        uint64_t elapsed = ata_get_time_ms() - start_time;
-        if (elapsed > ATA_TIMEOUT_MS) {
-            ata_last_error.error_code = ATA_ERR_TIMEOUT;
-            ata_last_error.status_register = status;
-            return ATA_ERR_TIMEOUT;
+        if (use_time) {
+            uint64_t elapsed = ata_get_time_ms() - start_time;
+            if (elapsed > ATA_TIMEOUT_MS) {
+                ata_last_error.error_code = ATA_ERR_TIMEOUT;
+                ata_last_error.status_register = status;
+                return ATA_ERR_TIMEOUT;
+            }
+        } else {
+            if (++iter > ITER_TIMEOUT) {
+                ata_last_error.error_code = ATA_ERR_TIMEOUT;
+                ata_last_error.status_register = status;
+                return ATA_ERR_TIMEOUT;
+            }
         }
     } while (status & ATA_SR_BSY);
-    
+
     if (status & (ATA_SR_ERR | ATA_SR_DF)) {
         uint8_t error_reg = inb(ATA_REG_ERROR);
         ata_last_error.error_code = ATA_ERR_DEVICE;
@@ -73,8 +88,11 @@ static int ata_wait_busy_clear(void) {
 
 static int ata_wait_drq(void) {
     uint64_t start_time = ata_get_time_ms();
+    int use_time = (pit_current_frequency() != 0);
+    uint32_t iter = 0;
+    const uint32_t ITER_TIMEOUT = 5000000u;
     uint8_t status;
-    
+
     do {
         status = inb(ATA_REG_STATUS);
         if (status & (ATA_SR_ERR | ATA_SR_DF)) {
@@ -84,14 +102,22 @@ static int ata_wait_drq(void) {
             ata_last_error.error_register = error_reg;
             return ATA_ERR_DEVICE;
         }
-        uint64_t elapsed = ata_get_time_ms() - start_time;
-        if (elapsed > ATA_TIMEOUT_MS) {
-            ata_last_error.error_code = ATA_ERR_TIMEOUT;
-            ata_last_error.status_register = status;
-            return ATA_ERR_TIMEOUT;
+        if (use_time) {
+            uint64_t elapsed = ata_get_time_ms() - start_time;
+            if (elapsed > ATA_TIMEOUT_MS) {
+                ata_last_error.error_code = ATA_ERR_TIMEOUT;
+                ata_last_error.status_register = status;
+                return ATA_ERR_TIMEOUT;
+            }
+        } else {
+            if (++iter > ITER_TIMEOUT) {
+                ata_last_error.error_code = ATA_ERR_TIMEOUT;
+                ata_last_error.status_register = status;
+                return ATA_ERR_TIMEOUT;
+            }
         }
     } while (!(status & ATA_SR_DRQ));
-    
+
     return 0;
 }
 
@@ -136,12 +162,18 @@ void ata_init(void) {
         return;
     }
 
-    uint64_t start_time = ata_get_time_ms();
-    while (status & ATA_SR_BSY) {
-        status = inb(ATA_REG_STATUS);
-        uint64_t elapsed = ata_get_time_ms() - start_time;
-        if (elapsed > ATA_TIMEOUT_MS) {
-            return; /* Timeout */
+    {
+        int use_time = (pit_current_frequency() != 0);
+        uint64_t start_time = ata_get_time_ms();
+        uint32_t iter = 0;
+        const uint32_t ITER_TIMEOUT = 5000000u;
+        while (status & ATA_SR_BSY) {
+            status = inb(ATA_REG_STATUS);
+            if (use_time) {
+                if (ata_get_time_ms() - start_time > ATA_TIMEOUT_MS) return;
+            } else {
+                if (++iter > ITER_TIMEOUT) return;
+            }
         }
     }
 
@@ -151,12 +183,18 @@ void ata_init(void) {
         return; /* Not ATA */
     }
 
-    start_time = ata_get_time_ms();
-    while (!(status & ATA_SR_DRQ) && !(status & ATA_SR_ERR)) {
-        status = inb(ATA_REG_STATUS);
-        uint64_t elapsed = ata_get_time_ms() - start_time;
-        if (elapsed > ATA_TIMEOUT_MS) {
-            return; /* Timeout */
+    {
+        int use_time = (pit_current_frequency() != 0);
+        uint64_t start_time = ata_get_time_ms();
+        uint32_t iter = 0;
+        const uint32_t ITER_TIMEOUT = 5000000u;
+        while (!(status & ATA_SR_DRQ) && !(status & ATA_SR_ERR)) {
+            status = inb(ATA_REG_STATUS);
+            if (use_time) {
+                if (ata_get_time_ms() - start_time > ATA_TIMEOUT_MS) return;
+            } else {
+                if (++iter > ITER_TIMEOUT) return;
+            }
         }
     }
 
